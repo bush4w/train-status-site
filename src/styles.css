@@ -125,6 +125,14 @@ body {
   font-size: 10px;
   font-weight: 700;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.train-marker.selected {
+  box-shadow:
+    0 0 0 3px rgba(74, 111, 165, 0.65),
+    0 1px 5px rgba(0, 0, 0, 0.45);
+  transform: scale(1.12);
 }
 
 /* 图例 */
@@ -159,4 +167,157 @@ body {
 .legend .muted {
   color: #999;
   margin-top: 6px;
+}
+
+.legend .clickable {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin-left: -4px;
+}
+
+.legend .clickable:hover {
+  background: #f0f3f8;
+}
+
+.legend .clickable.active {
+  background: #e8eef7;
+  font-weight: 600;
+}
+
+.legend .legend-status {
+  gap: 5px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #eee;
+  color: #777;
+}
+
+/* 车次详情面板（F3） */
+.detail {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+  width: 280px;
+  max-height: calc(100% - 120px);
+  overflow-y: auto;
+  background: rgba(255, 255, 255, 0.97);
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  font-size: 13px;
+  color: #444;
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-no {
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.detail-route {
+  flex: 1;
+  font-size: 12px;
+  color: #666;
+}
+
+.detail-close {
+  border: none;
+  background: none;
+  font-size: 18px;
+  line-height: 1;
+  color: #999;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.detail-close:hover {
+  color: #333;
+}
+
+.detail-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 6px;
+}
+
+.badge {
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.ontime-text {
+  color: #27ae60;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.delay-text {
+  color: #e67e22;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.detail-current {
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.detail-current .muted {
+  color: #999;
+  font-size: 12px;
+}
+
+.detail-timetable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-timetable th {
+  text-align: left;
+  color: #999;
+  font-weight: 500;
+  padding: 3px 6px;
+  border-bottom: 1px solid #eee;
+}
+
+.detail-timetable td {
+  padding: 4px 6px;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.detail-timetable tr.current td {
+  background: #e8eef7;
+  font-weight: 600;
+}
+
+.detail-timetable tr.next td {
+  background: #f4f7fb;
+}
+
+.detail-timetable .here {
+  color: #4a6fa5;
+  font-size: 10px;
+  margin-left: 4px;
+}
+
+.detail-note {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #aaa;
+  text-align: center;
 }
