@@ -4,14 +4,27 @@ import { stations, linePoints, stationsMap } from '../data/stations'
 import { trains } from '../data/trains'
 import { computeTrainPosition } from '../lib/position'
 import { wgs84ToGcj02 } from '../lib/coord'
+import { statusColor } from '../lib/status'
 
 // 高德瓦片使用 GCJ-02，所有 WGS-84 坐标先转换再交给 Leaflet
 const gcj = (lat, lng) => wgs84ToGcj02(lat, lng)
 
-export default function TrainMap({ simMinutes }) {
+function trainIcon(t, selected) {
+  return L.divIcon({
+    className: '',
+    html: `<div class="train-marker${selected ? ' selected' : ''}" style="background:${statusColor(t.delay)}">${t.no}</div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+  })
+}
+
+export default function TrainMap({ simMinutes, selectedNo, onSelect }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef({})
+  // onSelect 每次渲染都是新闭包，用 ref 透传，避免地图重复初始化
+  const onSelectRef = useRef(onSelect)
+  onSelectRef.current = onSelect
 
   // 初始化地图（仅一次）
   useEffect(() => {
@@ -54,15 +67,14 @@ export default function TrainMap({ simMinutes }) {
 
     // 列车 marker（初始置于地图外，随后由 simMinutes 驱动）
     trains.forEach((t) => {
-      const icon = L.divIcon({
-        className: '',
-        html: `<div class="train-marker" style="background:${t.color}">${t.no}</div>`,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14],
-      })
-      const m = L.marker([0, 0], { icon }).addTo(map)
+      const m = L.marker([0, 0], { icon: trainIcon(t, false) }).addTo(map)
+      // F3：点击列车打开详情（marker 默认不向地图冒泡，不会误触发取消选中）
+      m.on('click', () => onSelectRef.current(t.no))
       markersRef.current[t.no] = m
     })
+
+    // 点击地图空白处关闭详情
+    map.on('click', () => onSelectRef.current(null))
 
     mapRef.current = map
     return () => {
@@ -83,12 +95,24 @@ export default function TrainMap({ simMinutes }) {
       marker.unbindTooltip()
       const info =
         `<b>${t.no}</b>` +
-        (pos.delay ? `<span style="color:#e67e22">（晚点 ${pos.delay} 分）</span>` : '') +
+        (pos.delay ? `<span style="color:#e67e22">（晚点 ${pos.delay} 分）</span>` : '<span style="color:#27ae60">（正点）</span>') +
         `<br/>${pos.label}` +
-        (pos.nextStation ? `<br/>预计 ${pos.arrTime} 到 ${pos.nextStation}` : '')
+        (pos.nextStation ? `<br/>预计 ${pos.arrTime} 到 ${pos.nextStation}` : '') +
+        `<br/><span style="color:#999">点击查看详情</span>`
       marker.bindTooltip(info)
     })
   }, [simMinutes])
+
+  // 选中态高亮
+  useEffect(() => {
+    trains.forEach((t) => {
+      const marker = markersRef.current[t.no]
+      if (!marker) return
+      const selected = t.no === selectedNo
+      marker.setIcon(trainIcon(t, selected))
+      marker.setZIndexOffset(selected ? 1000 : 0)
+    })
+  }, [selectedNo])
 
   return <div ref={containerRef} className="map-container" />
 }

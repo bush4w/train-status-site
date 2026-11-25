@@ -1,10 +1,10 @@
 // 模拟列车（M1 演示数据，时刻为近似值）
 // delay：晚点分钟数（0 = 正点）
+// 点位颜色不再按车次固定，而是按正晚点状态着色（见 lib/status.js）
 
 export const trains = [
   {
     no: 'G1',
-    color: '#e74c3c',
     delay: 0,
     stops: [
       { code: 'BJP', arr: null, dep: '09:00' },
@@ -15,7 +15,6 @@ export const trains = [
   },
   {
     no: 'G101',
-    color: '#3498db',
     delay: 0,
     stops: [
       { code: 'BJP', arr: null, dep: '08:00' },
@@ -30,7 +29,6 @@ export const trains = [
   },
   {
     no: 'G103',
-    color: '#f39c12',
     delay: 15,
     stops: [
       { code: 'BJP', arr: null, dep: '08:30' },
