@@ -3,6 +3,8 @@ import TrainMap from './components/TrainMap'
 import ControlPanel from './components/ControlPanel'
 import TrainDetail from './components/TrainDetail'
 import { trains } from './data/trains'
+import { stations } from './data/stations'
+import { meta } from './data/meta'
 import { statusColor, ON_TIME_COLOR, DELAY_COLOR } from './lib/status'
 
 const START_HOUR = 9
@@ -79,7 +81,11 @@ export default function App() {
             </span>
           </div>
         ))}
-        <div className="item muted">京沪线模拟数据 · 非官方实时，仅供参考</div>
+        <div className="item muted">
+          {meta.line} {stations.length} 站 · 电报码来自 12306
+        </div>
+        <div className="item muted">时刻表：{meta.sources.timetable}</div>
+        <div className="item muted">非官方实时数据，仅供参考</div>
       </div>
     </div>
   )

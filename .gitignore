@@ -6,6 +6,9 @@ node_modules/
 dist/
 build/
 
+# 数据抓取缓存（12306 原始响应，不可信下载内容）
+.cache/
+
 # 环境与密钥
 .env
 .env.local
