@@ -37,9 +37,11 @@ export function parseLeftTicketEntry(entry) {
 
 /**
  * 解析 czxx/queryByTrainNo 响应 → 经停站数组
- * 响应格式（公开资料，M3 拿到真实响应后校准）：
+ * 响应格式（2026-11-25 浏览器态真实响应校准）：
  *   { data: { data: [{ station_name, station_train_code, arrive_time, start_time, station_no }] } }
- * 时间 "----" 表示无到/发时刻（始发站无到、终到站无发）
+ * 时间 "----" 表示无到/发时刻（始发站无到）；
+ * **终到站的 start_time 被 12306 填为与 arrive_time 相同**（实测 G1 上海虹桥 11:24/11:24），
+ * 归一为 null（终到站无发车）。
  * @param {object} json
  * @returns {{name:string, arr:string|null, dep:string|null, no:string}[]}
  */
@@ -47,10 +49,12 @@ export function parseTrainStops(json) {
   const rows = json?.data?.data
   if (!Array.isArray(rows)) return []
   const t = (v) => (v && v !== '----' && /^\d{2}:\d{2}$/.test(v) ? v : null)
-  return rows.map((r) => ({
+  const stops = rows.map((r) => ({
     name: r.station_name,
     arr: t(r.arrive_time),
     dep: t(r.start_time),
     no: String(r.station_no ?? ''),
   }))
+  if (stops.length) stops[stops.length - 1].dep = null
+  return stops
 }

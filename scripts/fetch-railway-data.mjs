@@ -70,58 +70,116 @@ function mergeTelecodes(allStations) {
   })
 }
 
-// ---------- 步骤 3：浏览器态时刻表管道（预留，--cookie 启用） ----------
+// ---------- 步骤 3：浏览器态时刻表管道（--cookie 启用，2026-11-25 实测打通） ----------
+// 目标车次：2026 运行图实际开行、终到上海虹桥的京沪标杆车
+// （G101/G103 已停运；G3/G5 终到上海站——既有线站，不在高铁本线表，实测确认）
+const REAL_TARGETS = ['G1', 'G7', 'G9', 'G11', 'G13']
+// 演示晚点值（M3 接入真实正晚点；meta.js 已披露）
+const DEMO_DELAY = { G9: 15 }
+
 async function fetchTimetables12306(stations, cookie, date) {
   const byName = indexByName(stations)
   const headers = {
     'User-Agent': UA,
     Cookie: cookie,
     Referer: 'https://kyfw.12306.cn/otn/leftTicket/init',
+    Accept: 'application/json, text/javascript, */*; q=0.01',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'X-Requested-With': 'XMLHttpRequest',
   }
   const from = byName['北京南'].code
   const to = byName['上海虹桥'].code
+  const entriesCache = `${CACHE_DIR}/leftticket_entries_${date}.json`
 
-  // 3a. 余票查询（端点轮转：302 返回 c_url 时跟随）
+  // 3a. 余票查询（端点轮转：c_url JSON 指引 + HTTP Location 重定向都要跟随）
   let path = 'leftTicket/query'
   let result = null
-  for (let hop = 0; hop < 3; hop++) {
+  let rejected = false
+  for (let hop = 0; hop < 6; hop++) {
     const url = `https://kyfw.12306.cn/otn/${path}?leftTicketDTO.train_date=${date}&leftTicketDTO.from_station=${from}&leftTicketDTO.to_station=${to}&purpose_codes=ADULT`
     const res = await fetch(url, { headers, redirect: 'manual' })
-    const json = await res.json().catch(() => null)
+    const text = await res.text()
+    const json = (() => { try { return JSON.parse(text) } catch { return null } })()
     if (json?.c_url) {
       path = json.c_url.startsWith('leftTicket/') ? json.c_url : `leftTicket/${json.c_url}`
       console.log(`  ↳ 端点轮转 → ${path}`)
       await politeDelay()
       continue
     }
+    const loc = res.headers.get('location')
+    if (res.status >= 300 && res.status < 400 && loc) {
+      // 错误页/登录页重定向 = 会话被风控拒绝，不再跟随
+      if (/error\.html|passport|login/.test(loc)) {
+        console.warn(`  ↳ 会话被拒绝（重定向 ${loc.slice(0, 60)}...）`)
+        rejected = true
+        break
+      }
+      path = loc.replace(/^https?:\/\/kyfw\.12306\.cn\/otn\//, '').replace(/^\//, '').split('?')[0]
+      console.log(`  ↳ 重定向 → ${path}`)
+      await politeDelay()
+      continue
+    }
     result = json?.data?.result
     break
   }
-  if (!result?.length) throw new Error('余票查询无结果（cookies 可能失效）')
-  if (isEncryptedResult(result)) throw new Error('余票结果为密文（需完整浏览器态 cookies，见 PRD §5）')
 
-  // 3b. 明文结果 → 目标车次 train_no
-  const entries = result.map(parseLeftTicketEntry)
-  const targets = JINGHU_TRAINS.map((t) => t.no)
-  const found = entries.filter((e) => targets.includes(e.station_train_code))
-  if (!found.length) throw new Error(`余票结果中未找到目标车次 ${targets.join('/')}`)
+  // 3b. 明文结果 → train_no 映射；leftTicket 被拒时用同日缓存兜底
+  //     （czxx/queryByTrainNo 域不受 JS 挑战限制，train_no 映射同日稳定）
+  let entries
+  if (result?.length && !isEncryptedResult(result)) {
+    entries = result.map(parseLeftTicketEntry)
+    mkdirSync(CACHE_DIR, { recursive: true })
+    writeFileSync(entriesCache, JSON.stringify(entries, null, 2))
+  } else {
+    if (!rejected && result?.length) console.warn('⚠ 余票结果为密文')
+    if (existsSync(entriesCache)) {
+      entries = JSON.parse(readFileSync(entriesCache, 'utf8'))
+      console.warn(`⚠ leftTicket 不可用，使用同日 train_no 缓存（${entries.length} 条）走 czxx 域`)
+    } else {
+      throw new Error('余票查询不可用且无同日缓存（需新鲜浏览器态 cookies）')
+    }
+  }
 
-  // 3c. 逐车次查全程时刻表（限流）
+  const seen = new Set()
+  const unique = entries.filter(
+    (e) =>
+      e.start_station_telecode === from &&
+      e.end_station_telecode === to &&
+      !seen.has(e.station_train_code) &&
+      seen.add(e.station_train_code),
+  )
+  let found = REAL_TARGETS.map((no) => unique.find((e) => e.station_train_code === no)).filter(Boolean)
+  if (found.length < 3) {
+    for (const e of unique) {
+      if (found.length >= 5) break
+      if (e.station_train_code.startsWith('G') && !found.includes(e)) found.push(e)
+    }
+  }
+  if (!found.length) throw new Error('余票结果中未找到可用 G 字头车次')
+
+  // 3c. 逐车次查全程时刻表（限流；原始响应存档供 M3 校准）
   const trains = []
   for (const e of found) {
     await politeDelay()
     const url = `https://kyfw.12306.cn/otn/czxx/queryByTrainNo?train_no=${e.train_no}&from_station_telecode=${e.start_station_telecode}&to_station_telecode=${e.end_station_telecode}&depart_date=${date}`
     const res = await fetch(url, { headers: { ...headers, Referer: 'https://kyfw.12306.cn/otn/czxx/init' } })
     const json = await res.json().catch(() => null)
+    mkdirSync(CACHE_DIR, { recursive: true })
+    writeFileSync(`${CACHE_DIR}/qbtn_${e.station_train_code}.json`, JSON.stringify(json, null, 2))
     const stops = parseTrainStops(json)
-    if (!stops.length) throw new Error(`${e.station_train_code} 时刻表为空（响应格式可能已变，需校准 otn-parser）`)
-    trains.push({
-      no: e.station_train_code,
-      delay: 0, // 真实正晚点属 M3 范围
-      stops: stops.map((s) => ({ code: byName[s.name]?.code, name: s.name, arr: s.arr, dep: s.dep })),
-    })
+    if (!stops.length) {
+      console.warn(`⚠ ${e.station_train_code} 时刻表为空，跳过`)
+      continue
+    }
+    const mapped = stops.map((s) => ({ code: byName[s.name]?.code, arr: s.arr, dep: s.dep }))
+    if (mapped.some((s) => !s.code)) {
+      console.warn(`⚠ ${e.station_train_code} 含线路表外车站，跳过`)
+      continue
+    }
+    trains.push({ no: e.station_train_code, delay: DEMO_DELAY[e.station_train_code] || 0, stops: mapped })
     console.log(`✓ 真实时刻表：${e.station_train_code}（${stops.length} 站）`)
   }
+  if (!trains.length) throw new Error('所有车次时刻表均不可用')
   return trains
 }
 
