@@ -1,0 +1,16 @@
+# 管理文档（红线：禁止推送到远程仓库）
+management-docs/
+
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+
+# 环境与密钥
+.env
+.env.local
+*.pem
+*.key
+
+# 日志
+*.log

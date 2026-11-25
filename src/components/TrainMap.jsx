@@ -1,0 +1,94 @@
+import { useEffect, useRef } from 'react'
+import L from 'leaflet'
+import { stations, linePoints, stationsMap } from '../data/stations'
+import { trains } from '../data/trains'
+import { computeTrainPosition } from '../lib/position'
+import { wgs84ToGcj02 } from '../lib/coord'
+
+// 高德瓦片使用 GCJ-02，所有 WGS-84 坐标先转换再交给 Leaflet
+const gcj = (lat, lng) => wgs84ToGcj02(lat, lng)
+
+export default function TrainMap({ simMinutes }) {
+  const containerRef = useRef(null)
+  const mapRef = useRef(null)
+  const markersRef = useRef({})
+
+  // 初始化地图（仅一次）
+  useEffect(() => {
+    const map = L.map(containerRef.current, {
+      center: gcj(34.5, 117.0),
+      zoom: 6,
+      minZoom: 4,
+    })
+
+    // 高德中文瓦片（国内访问快）；如需国际版可换 OpenStreetMap，见 coord.js 说明
+    L.tileLayer(
+      'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+      {
+        subdomains: ['1', '2', '3', '4'],
+        maxZoom: 18,
+        attribution: '&copy; 高德地图',
+      },
+    ).addTo(map)
+
+    // 线路
+    L.polyline(linePoints.map((p) => [gcj(p.lat, p.lng).lat, gcj(p.lat, p.lng).lng]), {
+      color: '#4a6fa5',
+      weight: 3,
+      opacity: 0.7,
+    }).addTo(map)
+
+    // 车站
+    stations.forEach((s) => {
+      const p = gcj(s.lat, s.lng)
+      L.circleMarker([p.lat, p.lng], {
+        radius: 4,
+        color: '#fff',
+        weight: 1.5,
+        fillColor: '#333',
+        fillOpacity: 1,
+      })
+        .bindTooltip(s.name)
+        .addTo(map)
+    })
+
+    // 列车 marker（初始置于地图外，随后由 simMinutes 驱动）
+    trains.forEach((t) => {
+      const icon = L.divIcon({
+        className: '',
+        html: `<div class="train-marker" style="background:${t.color}">${t.no}</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+      })
+      const m = L.marker([0, 0], { icon }).addTo(map)
+      markersRef.current[t.no] = m
+    })
+
+    mapRef.current = map
+    return () => {
+      map.remove()
+      mapRef.current = null
+    }
+  }, [])
+
+  // 随时间推进更新列车位置
+  useEffect(() => {
+    if (!mapRef.current) return
+    trains.forEach((t) => {
+      const marker = markersRef.current[t.no]
+      if (!marker) return
+      const pos = computeTrainPosition(t, stationsMap, simMinutes)
+      const p = gcj(pos.lat, pos.lng)
+      marker.setLatLng([p.lat, p.lng])
+      marker.unbindTooltip()
+      const info =
+        `<b>${t.no}</b>` +
+        (pos.delay ? `<span style="color:#e67e22">（晚点 ${pos.delay} 分）</span>` : '') +
+        `<br/>${pos.label}` +
+        (pos.nextStation ? `<br/>预计 ${pos.arrTime} 到 ${pos.nextStation}` : '')
+      marker.bindTooltip(info)
+    })
+  }, [simMinutes])
+
+  return <div ref={containerRef} className="map-container" />
+}
