@@ -62,6 +62,21 @@ describe('parseTrainStops', () => {
     expect(stops[1]).toEqual({ name: '济南西', arr: '10:22', dep: '10:24', no: '02' })
     expect(stops[2]).toEqual({ name: '上海虹桥', arr: '13:28', dep: null, no: '04' })
   })
+  it('终到站 start_time 与 arrive_time 相同时归一为 null（2026-11-25 实测 G1 格式）', () => {
+    const json = {
+      data: {
+        data: [
+          { station_name: '北京南', arrive_time: '----', start_time: '06:30', station_no: '01' },
+          { station_name: '上海虹桥', arrive_time: '11:24', start_time: '11:24', station_no: '07' },
+        ],
+      },
+    }
+    const stops = parseTrainStops(json)
+    expect(stops[0].arr).toBeNull()
+    expect(stops[1].arr).toBe('11:24')
+    expect(stops[1].dep).toBeNull()
+  })
+
   it('空响应/异常结构返回空数组', () => {
     expect(parseTrainStops({ data: { data: [] } })).toEqual([])
     expect(parseTrainStops(null)).toEqual([])

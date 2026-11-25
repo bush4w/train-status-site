@@ -2,8 +2,9 @@
 //
 // 坐标来源：公开地理信息人工整理（WGS-84，精度约百米级，全国比例尺演示足够）
 //           外部坐标源（GitHub/OSM/高德 web）实测均不可达，预留适配层替换。
-// 时刻表来源：公开资料整理，近似当前运行图，**以 12306 为准**；
-//           浏览器态抓取管道就绪后可无缝替换（fetch-railway-data.mjs --cookie）。
+// 时刻表来源：2026-11-26 运行图快照（2026-11-25 经 12306 浏览器态抓取验证）；
+//           在线重跑 fetch-railway-data.mjs --cookie 可刷新。
+//           旧整理数据中的 G101/G103 已停运（实测确认），G3/G5 终到上海站（既有线）。
 // 电报码不在此硬编码——由脚本从 12306 station_name.js 实测数据按站名合并。
 
 // 京沪高铁本线车站（顺序即线路走向：北京南 → 上海虹桥）
@@ -33,42 +34,62 @@ export const JINGHU_STATIONS = [
   { name: '上海虹桥', lat: 31.197, lng: 121.336 },
 ]
 
-// 代表性车次时刻表（公开资料整理；delay 为演示值，M3 接入真实正晚点）
+// 代表性车次时刻表（2026-11-26 运行图快照，12306 浏览器态验证；delay 为演示值，M3 接入真实正晚点）
 export const JINGHU_TRAINS = [
   {
     no: 'G1',
     delay: 0,
     stops: [
-      { name: '北京南', arr: null, dep: '09:00' },
-      { name: '济南西', arr: '10:22', dep: '10:24' },
-      { name: '南京南', arr: '11:57', dep: '11:59' },
-      { name: '上海虹桥', arr: '13:28', dep: null },
+      { name: '北京南', arr: null, dep: '06:30' },
+      { name: '沧州西', arr: '07:18', dep: '07:20' },
+      { name: '德州东', arr: '07:45', dep: '07:47' },
+      { name: '曲阜东', arr: '08:34', dep: '08:36' },
+      { name: '南京南', arr: '10:13', dep: '10:15' },
+      { name: '苏州北', arr: '10:59', dep: '11:01' },
+      { name: '上海虹桥', arr: '11:24', dep: null },
     ],
   },
   {
-    no: 'G101',
+    no: 'G7',
     delay: 0,
     stops: [
-      { name: '北京南', arr: null, dep: '08:00' },
-      { name: '天津南', arr: '08:34', dep: '08:36' },
-      { name: '济南西', arr: '09:42', dep: '09:45' },
-      { name: '徐州东', arr: '10:51', dep: '10:54' },
-      { name: '蚌埠南', arr: '11:30', dep: '11:32' },
-      { name: '南京南', arr: '12:14', dep: '12:17' },
-      { name: '无锡东', arr: '12:56', dep: '12:58' },
-      { name: '上海虹桥', arr: '13:24', dep: null },
+      { name: '北京南', arr: null, dep: '09:00' },
+      { name: '济南西', arr: '10:22', dep: '10:25' },
+      { name: '南京南', arr: '12:24', dep: '12:26' },
+      { name: '苏州北', arr: '13:11', dep: '13:13' },
+      { name: '上海虹桥', arr: '13:37', dep: null },
     ],
   },
   {
-    no: 'G103',
+    no: 'G9',
     delay: 15, // 演示晚点值（M3 替换为真实正晚点）
     stops: [
-      { name: '北京南', arr: null, dep: '08:30' },
-      { name: '天津南', arr: '09:04', dep: '09:06' },
-      { name: '济南西', arr: '10:12', dep: '10:15' },
-      { name: '徐州东', arr: '11:21', dep: '11:24' },
-      { name: '南京南', arr: '12:35', dep: '12:38' },
-      { name: '上海虹桥', arr: '13:52', dep: null },
+      { name: '北京南', arr: null, dep: '10:00' },
+      { name: '济南西', arr: '11:23', dep: '11:26' },
+      { name: '南京南', arr: '13:24', dep: '13:26' },
+      { name: '无锡东', arr: '14:05', dep: '14:07' },
+      { name: '上海虹桥', arr: '14:35', dep: null },
+    ],
+  },
+  {
+    no: 'G11',
+    delay: 0,
+    stops: [
+      { name: '北京南', arr: null, dep: '10:03' },
+      { name: '济南西', arr: '11:26', dep: '11:30' },
+      { name: '南京南', arr: '13:28', dep: '13:31' },
+      { name: '常州北', arr: '14:00', dep: '14:02' },
+      { name: '上海虹桥', arr: '14:39', dep: null },
+    ],
+  },
+  {
+    no: 'G13',
+    delay: 0,
+    stops: [
+      { name: '北京南', arr: null, dep: '16:00' },
+      { name: '济南西', arr: '17:22', dep: '17:24' },
+      { name: '南京南', arr: '19:24', dep: '19:26' },
+      { name: '上海虹桥', arr: '20:28', dep: null },
     ],
   },
 ]
@@ -76,6 +97,6 @@ export const JINGHU_TRAINS = [
 export const DATA_SOURCES = {
   telecode: '12306 station_name.js（实测抓取）',
   coord: '公开地理信息人工整理（WGS-84，约百米精度）',
-  timetable: '公开资料整理（以 12306 为准）',
+  timetable: '2026-11-26 运行图快照（12306 浏览器态验证）',
   delay: '演示值（M3 接入真实正晚点）',
 }
