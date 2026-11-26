@@ -120,7 +120,7 @@ export function distKm(a, b) {
  * @param {Map} pairCache 站对缓存（跨车次复用）
  * @returns {{pts:number[][], kmAt:number[], stopKm:number[], totalKm:number}|null}
  */
-export function buildTrainPath(train, stationsMap, index, pairCache = new Map()) {
+export function buildTrainPath(train, stationsMap, index, pairCache = new Map(), router = null) {
   const stops = train.stops.map((s) => stationsMap[s.code]).filter(Boolean)
   if (stops.length < 2) return null
   const pts = []
@@ -136,9 +136,12 @@ export function buildTrainPath(train, stationsMap, index, pairCache = new Map())
     const a = [stops[i].lat, stops[i].lng]
     const b = [stops[i + 1].lat, stops[i + 1].lng]
     const key = `${a[0].toFixed(3)},${a[1].toFixed(3)}|${b[0].toFixed(3)},${b[1].toFixed(3)}`
-    let seg = pairCache.get(key)
-    if (seg === undefined) {
-      seg = snapChord(a, b, index) || [a, b]
+    let seg
+    if (pairCache.has(key)) {
+      seg = pairCache.get(key)
+    } else {
+      // 优先弦线采样（快）；绕行严重的线路采样会失败 → 路由图兜底（Dijkstra）
+      seg = snapChord(a, b, index) || (router ? router(a, b) : null) || [a, b]
       pairCache.set(key, seg)
     }
     const start = pts.length === 0 ? 0 : 1
