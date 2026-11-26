@@ -180,6 +180,9 @@ export default function App() {
         onToggle={() => setPlaying((p) => !p)}
         onReset={goLive}
         onCorridor={setCorridorId}
+        corridor={corridor}
+        onShowCorridor={() => corridor && setCorridorId(corridor.id)}
+        onClearCorridor={() => setCorridorId(null)}
       >
         <SearchBox stations={data.stations} trains={effectiveTrains} onPickTrain={pickTrain} onPickStation={pickStation} />
       </ControlPanel>
