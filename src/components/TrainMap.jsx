@@ -1,7 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
 import { stations, stationsMap } from '../data/stations'
-import { railLines } from '../data/lines'
 import { computeTrainPosition } from '../lib/position'
 import { wgs84ToGcj02 } from '../lib/coord'
 import { trainTypeInfo } from '../lib/train-type'
@@ -59,6 +58,8 @@ export default function TrainMap({ trains, simMinutes, selectedNo, onSelect, fly
   const mapRef = useRef(null)
   const markersRef = useRef({})
   const corridorLinesRef = useRef({})
+  const [railLines, setRailLines] = useState(null)
+  const [mapReady, setMapReady] = useState(false)
   // 每帧/每次轮询变化的量用 ref 透传，地图仅初始化一次
   const simRef = useRef(simMinutes)
   simRef.current = simMinutes
@@ -88,21 +89,8 @@ export default function TrainMap({ trains, simMinutes, selectedNo, onSelect, fly
       },
     ).addTo(map)
 
-    // 真实铁路线位（OSM 几何，WGS-84 → GCJ-02；普速在下、高铁在上）
-    const toGcjLine = (line) => {
-      const out = new Array(line.length)
-      for (let i = 0; i < line.length; i++) {
-        const p = gcj(line[i][0], line[i][1])
-        out[i] = [p.lat, p.lng]
-      }
-      return out
-    }
-    for (const line of railLines.conv) {
-      L.polyline(toGcjLine(line), { color: '#8a8f98', weight: 1, opacity: 0.55, interactive: false }).addTo(map)
-    }
-    for (const line of railLines.hsr) {
-      L.polyline(toGcjLine(line), { color: '#4a6fa5', weight: 1.8, opacity: 0.75, interactive: false }).addTo(map)
-    }
+    // 真实铁路线位（OSM 几何，运行时加载 public/data/lines.json，避免进主包）
+    // → 见下方 useEffect（lines 到货后绘制）
 
     // 车站分层：精确坐标站常驻；城市级站 zoom≥7 才显示（减噪）
     const preciseLayer = L.layerGroup()
@@ -171,14 +159,55 @@ export default function TrainMap({ trains, simMinutes, selectedNo, onSelect, fly
     const timer = setInterval(updatePositions, 500)
 
     mapRef.current = map
+    setMapReady(true)
     return () => {
       clearInterval(timer)
       map.remove()
       mapRef.current = null
       markersRef.current = {}
       corridorLinesRef.current = {}
+      setMapReady(false)
     }
   }, [])
+
+  // 线位几何：运行时拉取（数 MB，独立缓存，不阻塞主包）
+  useEffect(() => {
+    let alive = true
+    fetch('data/lines.json', { cache: 'no-cache' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (alive && j) setRailLines(j)
+      })
+      .catch(() => {
+        /* 无几何数据时仅显示车站与列车 */
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  // 绘制线位（普速在下、高铁在上）
+  useEffect(() => {
+    if (!mapReady || !railLines || !mapRef.current) return
+    const toGcjLine = (line) => {
+      const out = new Array(line.length)
+      for (let i = 0; i < line.length; i++) {
+        const p = gcj(line[i][0], line[i][1])
+        out[i] = [p.lat, p.lng]
+      }
+      return out
+    }
+    const layer = L.layerGroup().addTo(mapRef.current)
+    for (const line of railLines.conv ?? []) {
+      L.polyline(toGcjLine(line), { color: '#8a8f98', weight: 1, opacity: 0.55, interactive: false }).addTo(layer)
+    }
+    for (const line of railLines.hsr ?? []) {
+      L.polyline(toGcjLine(line), { color: '#4a6fa5', weight: 1.8, opacity: 0.75, interactive: false }).addTo(layer)
+    }
+    return () => {
+      mapRef.current?.removeLayer(layer)
+    }
+  }, [mapReady, railLines])
 
   // 选中走廊高亮
   useEffect(() => {

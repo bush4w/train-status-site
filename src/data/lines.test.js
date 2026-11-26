@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { railLines } from './lines'
+import { readFileSync, existsSync } from 'node:fs'
 
-describe('railLines（OSM 真实线路几何）', () => {
-  it('含 ODbL 归属声明', () => {
+// 线位几何走 public/data/lines.json（运行时加载，不进主包）
+const FILE = 'public/data/lines.json'
+const railLines = JSON.parse(readFileSync(FILE, 'utf8'))
+
+describe('railLines（OSM 真实线路几何，public/data/lines.json）', () => {
+  it('文件存在且含 ODbL 归属声明', () => {
+    expect(existsSync(FILE)).toBe(true)
     expect(railLines.attribution).toContain('OpenStreetMap')
     expect(railLines.attribution).toContain('ODbL')
   })
