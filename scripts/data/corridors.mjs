@@ -63,7 +63,8 @@ export const CORRIDORS = [
   {
     id: 'qingzang',
     name: '青藏铁路',
-    stations: ['西宁', '格尔木', '安多', '那曲', '当雄', '拉萨', '林芝'],
+    // 林芝站属拉林（川藏）线延伸段，保留以覆盖拉林走廊
+    stations: ['西宁', '格尔木', '安多', '那曲', '拉萨', '林芝'],
   },
   {
     id: 'nanguang',

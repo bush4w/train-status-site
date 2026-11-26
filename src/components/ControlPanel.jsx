@@ -2,6 +2,13 @@ import { CORRIDORS } from '../lib/diagram'
 
 const SPEEDS = [30, 60, 120, 300, 600]
 
+// 线路图层：与 lines.json 的 hsr / conv 分组、车次的 trainCategory 对应
+const LINE_LAYERS = [
+  { id: 'all', label: '全部', title: '同时显示高铁与普速线路' },
+  { id: 'hsr', label: '高铁', title: '仅看高铁线路（动车组列车）' },
+  { id: 'conv', label: '普速', title: '仅看普速线路（普速列车）' },
+]
+
 export default function ControlPanel({
   time,
   liveMode,
@@ -15,6 +22,8 @@ export default function ControlPanel({
   corridor,
   onShowCorridor,
   onClearCorridor,
+  lineFilter,
+  onLineFilter,
   children,
 }) {
   return (
@@ -40,6 +49,23 @@ export default function ControlPanel({
               onClick={() => onSpeed(s)}
             >
               {s}x
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="panel-layer">
+        <span className="label">线路</span>
+        <div className="speed-btns">
+          {LINE_LAYERS.map((l) => (
+            <button
+              key={l.id}
+              type="button"
+              className={lineFilter === l.id ? 'active' : ''}
+              onClick={() => onLineFilter(l.id)}
+              title={l.title}
+            >
+              {l.label}
             </button>
           ))}
         </div>

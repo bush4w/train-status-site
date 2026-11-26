@@ -48,4 +48,31 @@ describe('chainSegments', () => {
   it('空输入安全', () => {
     expect(chainSegments([])).toEqual([])
   })
+
+  it('端点相距 ~100m（非逐位相等）也能串联', () => {
+    const a = [
+      [0, 0],
+      [0, 0.01],
+    ]
+    const b = [
+      [0.0009, 0.01],
+      [0.0009, 0.02],
+    ] // 端点间距 0.0009° ≈ 100m
+    const lines = chainSegments([a, b])
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toHaveLength(3) // 接缝去重：两段各贡献一个端点
+    expect(lines[0][2][1]).toBe(0.02)
+  })
+
+  it('超过容差的端点不串联', () => {
+    const a = [
+      [0, 0],
+      [0, 0.01],
+    ]
+    const b = [
+      [0.02, 0.01],
+      [0.02, 0.02],
+    ]
+    expect(chainSegments([a, b])).toHaveLength(2)
+  })
 })

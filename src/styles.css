@@ -78,7 +78,8 @@ button {
 }
 
 .panel-time,
-.panel-speed {
+.panel-speed,
+.panel-layer {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -356,6 +357,11 @@ button {
   font-size: 10px;
   color: #666;
   white-space: nowrap;
+}
+
+/* 当前图层外的车型（切换高铁/普速时） */
+.type-chip.dim {
+  opacity: 0.35;
 }
 
 .chip-shape {
