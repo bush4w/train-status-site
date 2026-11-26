@@ -24,7 +24,6 @@ import {
   parseLeftTicketEntry,
   parseTrainStops,
   parseTrainNameList,
-  matchTrainByName,
   parseDelayMessage,
 } from './lib/otn-parser.mjs'
 import { JINGHU_STATIONS, JINGHU_TRAINS, DATA_SOURCES } from './data/jinghu-line.mjs'
@@ -136,8 +135,25 @@ async function loadCatalog(date) {
 }
 
 // ---------- 全国车次选择：类型配额 + 等距采样（确定性、地域分散） ----------
-const PINNED = ['G1', 'G7', 'G9', 'G11', 'G13'] // 京沪标杆（含精确坐标站）
-const NATIONAL_QUOTAS = { G: 80, D: 50, C: 8, Z: 16, T: 20, K: 26 } // 候选 ~200，跨零点车过滤后约 150+
+// 京沪标杆车：从当日目录动态选取（2026-12 下旬动车组字头换编后自动适应，不写死车次号）
+// 新版编排规定字头：X/G/T/K/D/C/S = 动车组族（央视新闻 2026-10-16）
+const EMU_LETTERS = new Set(['X', 'G', 'T', 'K', 'D', 'C', 'S'])
+const NATIONAL_QUOTAS = { X: 8, G: 60, T: 16, K: 20, D: 40, C: 8, S: 4, Z: 12, N: 8, V: 14, Y: 4, L: 2 }
+
+const codeNum = (code) => parseInt(String(code).replace(/^\D+/, ''), 10) || 0
+
+function pickJinghuFlagships(catalog, count = 5) {
+  const onRoute = catalog.filter((t) => t.route === '北京南-上海虹桥')
+  const emu = onRoute
+    .filter((t) => EMU_LETTERS.has(String(t.code[0] ?? '').toUpperCase()))
+    .sort((a, b) => codeNum(a.code) - codeNum(b.code))
+  const picked = emu.slice(0, count)
+  for (const t of onRoute) {
+    if (picked.length >= count) break
+    if (!picked.includes(t)) picked.push(t)
+  }
+  return picked
+}
 
 function trainType(code) {
   const m = String(code).match(/^([A-Z]+)/)
@@ -158,8 +174,8 @@ function selectNationalTrains(catalog, geocodedByName) {
       selected.push(t)
     }
   }
-  // 固定包含京沪标杆
-  for (const no of PINNED) push(eligible.find((t) => t.code === no && t.route === '北京南-上海虹桥'))
+  // 固定包含京沪标杆（动态选取，适应车次换编）
+  for (const t of pickJinghuFlagships(eligible)) push(t)
   // 按类型配额等距采样（目录按车次号排序 ≈ 路局/地域聚簇，等距取样保证分散）
   for (const [ty, quota] of Object.entries(NATIONAL_QUOTAS)) {
     const pool = eligible.filter((t) => trainType(t.code) === ty && !seen.has(t.train_no))
@@ -237,14 +253,13 @@ async function fetchNationalTimetables(selected, date, geocodedByName) {
 }
 
 // ---------- 京沪模式（保留：高精演示 + 备用链验证） ----------
-const REAL_TARGETS = PINNED
 const DEMO_DELAY = { G9: 15 } // 兜底演示值：仅正晚点抓取失败/离线时使用（meta 披露）
 
 async function fetchTimetablesQTI(stations, date) {
   const byName = indexByName(stations)
   const catalog = await loadCatalog(date)
-  const targets = REAL_TARGETS.map((no) => matchTrainByName(catalog, no, '北京南', '上海虹桥')).filter(Boolean)
-  if (targets.length < 3) throw new Error(`目录中仅匹配到 ${targets.length} 趟目标车次`)
+  const targets = pickJinghuFlagships(catalog) // 动态选标杆车（自动适应 12 月下旬车次换编）
+  if (targets.length < 3) throw new Error(`目录中仅匹配到 ${targets.length} 趟京沪标杆车`)
   const trains = []
   for (const t of targets) {
     const json = await fetchTimetableForTrain(t, date)
@@ -330,7 +345,9 @@ async function fetchTimetables12306(stations, cookie, date) {
       !seen.has(e.station_train_code) &&
       seen.add(e.station_train_code),
   )
-  let found = REAL_TARGETS.map((no) => unique.find((e) => e.station_train_code === no)).filter(Boolean)
+  // 备用链目标车次：取自验证快照的车次号（换编后如失效，主链 QTI 动态选取仍可用）
+  const targets = JINGHU_TRAINS.map((t) => t.no)
+  let found = targets.map((no) => unique.find((e) => e.station_train_code === no)).filter(Boolean)
   if (found.length < 3) {
     for (const e of unique) {
       if (found.length >= 5) break
@@ -519,7 +536,17 @@ function emit(stations, trains, meta) {
   writeFileSync('src/data/stations.js', stationJs)
   writeFileSync('src/data/trains.js', trainJs)
   writeFileSync('src/data/meta.js', metaJs)
-  console.log(`✓ 已生成 src/data/*（车站 ${stations.length}，车次 ${trains.length}）`)
+  // 实时晚点数据文件：前端轮询用（配合 auto-refresh 定时刷新，dev/preview/静态部署均生效）
+  mkdirSync('public/live', { recursive: true })
+  writeFileSync(
+    'public/live/delays.json',
+    JSON.stringify({
+      generatedAt: meta.generatedAt,
+      delayAsOf: meta.delayAsOf ?? null,
+      delays: Object.fromEntries(trains.map((t) => [t.no, t.delay])),
+    }),
+  )
+  console.log(`✓ 已生成 src/data/* + public/live/delays.json（车站 ${stations.length}，车次 ${trains.length}）`)
 }
 
 function saveSnapshot(data) {
@@ -600,7 +627,7 @@ async function main() {
     const geocodedByName = Object.fromEntries(stations.map((s) => [s.name, s]))
     const catalog = await loadCatalog(date)
     const selected = selectNationalTrains(catalog, geocodedByName)
-    console.log(`→ 候选车次 ${selected.length} 趟（类型配额 + 等距采样，含京沪标杆 ${PINNED.join('/')}）`)
+    console.log(`→ 候选车次 ${selected.length} 趟（新编排字头配额 + 等距采样，京沪标杆动态选取）`)
     try {
       trains = await fetchNationalTimetables(selected, date, geocodedByName)
       timetableSource = `12306 queryTrainInfo 抓取（${date} 发车日，免 cookie，城市级坐标）`

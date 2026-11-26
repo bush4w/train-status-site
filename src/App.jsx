@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import TrainMap from './components/TrainMap'
 import ControlPanel from './components/ControlPanel'
 import TrainDetail from './components/TrainDetail'
@@ -12,46 +12,93 @@ import { computeTrainPosition } from './lib/position'
 import { TRAIN_TYPES } from './lib/train-type'
 
 export default function App() {
-  // 模拟时钟默认对齐真实当前时间：列车位置与正晚点快照同日同刻，消除班次错位
+  // 时钟默认「实时」模式：直接对接系统墙钟（不漂移、不倍速）；
+  // 选择倍速或拖动时间轴 → 进入模拟模式（探索运行图用）
   const [simTime, setSimTime] = useState(() => new Date())
+  const [liveMode, setLiveMode] = useState(true)
   const [speed, setSpeed] = useState(120)
   const [playing, setPlaying] = useState(true)
   const [selectedNo, setSelectedNo] = useState(null)
   const [scrubbing, setScrubbing] = useState(false)
   const [flyTarget, setFlyTarget] = useState(null)
   const [legendOpen, setLegendOpen] = useState(true)
+  const [liveDelays, setLiveDelays] = useState(null)
+  const liveModeRef = useRef(liveMode)
+  liveModeRef.current = liveMode
 
-  // 模拟时钟：每 100ms 推进 speed 倍（拖动时间轴时暂停推进）
+  // 时钟推进：实时=每 tick 取系统时间；模拟=按倍速推进（拖动时间轴时暂停）
   useEffect(() => {
     if (!playing || scrubbing) return
     const id = setInterval(() => {
-      setSimTime((t) => new Date(t.getTime() + speed * 100))
+      if (liveModeRef.current) setSimTime(new Date())
+      else setSimTime((t) => new Date(t.getTime() + speed * 100))
     }, 100)
     return () => clearInterval(id)
   }, [playing, speed, scrubbing])
 
+  // 实时晚点轮询：读取 auto-refresh 生成的 live/delays.json（45–75s 随机间隔；
+  // 无数据源时静默使用内置快照）
+  useEffect(() => {
+    let alive = true
+    let timer
+    const poll = async () => {
+      try {
+        const r = await fetch(`live/delays.json?_=${Date.now()}`, { cache: 'no-store' })
+        if (r.ok) {
+          const j = await r.json()
+          if (alive && j && j.delays) setLiveDelays(j)
+        }
+      } catch {
+        /* 静默 */
+      }
+      if (alive) timer = setTimeout(poll, 45000 + Math.random() * 30000)
+    }
+    poll()
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [])
+
+  // 有效车次 = 构建时数据 ⊕ 实时晚点（按车次号覆盖）
+  const effectiveTrains = useMemo(() => {
+    if (!liveDelays?.delays) return trains
+    return trains.map((t) =>
+      liveDelays.delays[t.no] != null && liveDelays.delays[t.no] !== t.delay
+        ? { ...t, delay: liveDelays.delays[t.no] }
+        : t,
+    )
+  }, [liveDelays])
+
   const simMinutes =
     simTime.getHours() * 60 + simTime.getMinutes() + simTime.getSeconds() / 60
 
-  const reset = () => setSimTime(new Date()) // 回到现在（真实时间）
-
-  const pad = (n) => String(n).padStart(2, '0')
-  const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-
-  const selectedTrain = trains.find((t) => t.no === selectedNo) || null
-  // 晚点 Top5（全国模式车次多，图例只列晚点前列）
-  const lateTop = [...trains]
-    .filter((t) => t.delay > 0)
-    .sort((a, b) => b.delay - a.delay)
-    .slice(0, 5)
-
-  // F6 时间轴拖动：设置当日时刻
+  // 回到实时：切回墙钟模式并对齐当前时间
+  const goLive = () => {
+    setLiveMode(true)
+    setSimTime(new Date())
+  }
+  const enterSim = (s) => {
+    setLiveMode(false)
+    setSpeed(s)
+  }
   const scrubTo = (m) => {
+    setLiveMode(false) // 拖动时间轴即离开实时模式
     const d = new Date()
     d.setHours(0, 0, 0, 0)
     d.setTime(d.getTime() + m * 60000)
     setSimTime(d)
   }
+
+  const pad = (n) => String(n).padStart(2, '0')
+  const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+
+  const selectedTrain = effectiveTrains.find((t) => t.no === selectedNo) || null
+  // 晚点 Top5（全国模式车次多，图例只列晚点前列）
+  const lateTop = [...effectiveTrains]
+    .filter((t) => t.delay > 0)
+    .sort((a, b) => b.delay - a.delay)
+    .slice(0, 5)
 
   // F5 搜索定位：车次→当前位置；车站→站点坐标
   const flySeq = flyTarget?.seq ?? 0
@@ -64,9 +111,12 @@ export default function App() {
     setFlyTarget({ lat: s.lat, lng: s.lng, zoom: 10, seq: flySeq + 1 })
   }
 
+  const delayAsOf = liveDelays?.delayAsOf ?? meta.delayAsOf
+
   return (
     <div className="app">
       <TrainMap
+        trains={effectiveTrains}
         simMinutes={simMinutes}
         selectedNo={selectedNo}
         onSelect={setSelectedNo}
@@ -74,13 +124,15 @@ export default function App() {
       />
       <ControlPanel
         time={fmtTime(simTime)}
+        liveMode={liveMode}
         speed={speed}
         playing={playing}
-        onSpeed={setSpeed}
+        onSpeed={enterSim}
+        onLive={goLive}
         onToggle={() => setPlaying((p) => !p)}
-        onReset={reset}
+        onReset={goLive}
       >
-        <SearchBox onPickTrain={pickTrain} onPickStation={pickStation} />
+        <SearchBox trains={effectiveTrains} onPickTrain={pickTrain} onPickStation={pickStation} />
       </ControlPanel>
       <Timeline
         minutes={simMinutes}
@@ -109,7 +161,7 @@ export default function App() {
           <div className="legend-body">
             <div className="type-grid">
               {TRAIN_TYPES.map((t) => (
-                <span className="type-chip" key={t.letter} title={t.label}>
+                <span className="type-chip" key={t.letter} title={`${t.label}：${t.desc}`}>
                   <i className={`chip-shape shape-${t.shape}`} style={{ '--tc': t.color }} />
                   {t.letter}·{t.label}
                 </span>
@@ -122,7 +174,7 @@ export default function App() {
               <span>晚点</span>
             </div>
             <div className="item muted">
-              在图车次 {trains.length} · 车站 {meta.counts?.stations ?? stations.length}
+              在图车次 {effectiveTrains.length} · 车站 {meta.counts?.stations ?? stations.length}
             </div>
             {lateTop.length === 0 && <div className="item muted">抽样车次当前均正点</div>}
             {lateTop.map((t) => (
@@ -138,9 +190,11 @@ export default function App() {
               </div>
             ))}
             <div className="item muted">
-              正晚点：{meta.delayAsOf ? `抽样实测于 ${meta.delayAsOf}` : meta.sources.delay}
+              正晚点：{delayAsOf ? `抽样实测于 ${delayAsOf}` : meta.sources.delay}
+              {liveDelays && <span className="live-dot" title="实时刷新已连接" />}
             </div>
             <div className="item muted">数据 {meta.generatedAt} · 非官方实时，仅供参考</div>
+            <div className="item muted attribution">线路几何 © OpenStreetMap (ODbL)</div>
           </div>
         )}
       </div>
