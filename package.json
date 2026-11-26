@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "refresh": "node scripts/auto-refresh.mjs",
-    "refresh:once": "node scripts/auto-refresh.mjs --once"
+    "refresh:once": "node scripts/auto-refresh.mjs --once",
+    "fetch": "node scripts/fetch-railway-data.mjs",
+    "fetch:jinghu": "node scripts/fetch-railway-data.mjs --scope=jinghu"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
