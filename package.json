@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "refresh": "node scripts/auto-refresh.mjs",
+    "refresh:once": "node scripts/auto-refresh.mjs --once"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

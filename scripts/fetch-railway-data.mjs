@@ -24,6 +24,7 @@ import {
   parseDelayMessage,
 } from './lib/otn-parser.mjs'
 import { JINGHU_STATIONS, JINGHU_TRAINS, DATA_SOURCES } from './data/jinghu-line.mjs'
+import { shuffled } from './lib/schedule.mjs'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
@@ -302,7 +303,8 @@ async function fetchRealDelays(trains, stations) {
   const nowMin = now.getHours() * 60 + now.getMinutes()
   let realCount = 0
 
-  for (const t of trains) {
+  // 随机化查询顺序（US-14：避免固定访问模式）
+  for (const t of shuffled(trains)) {
     await politeDelay()
     const { stop, sched } = pickDelayQueryStop(t, nowMin)
     const st = byCode[stop.code]
