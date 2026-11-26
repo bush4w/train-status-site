@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import { search } from '../lib/search'
-import { stations } from '../data/stations'
 import { statusColor } from '../lib/status'
 
-// F5 车次/车站搜索：输入即搜，点击结果定位（trains 由 App 传入，含实时晚点）
-export default function SearchBox({ trains, onPickTrain, onPickStation }) {
+// F5 车次/车站搜索：输入即搜，点击结果定位（trains/stations 由 App 传入）
+export default function SearchBox({ stations, trains, onPickTrain, onPickStation }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
   const result = q.trim() ? search(q, trains, stations) : { trains: [], stations: [] }

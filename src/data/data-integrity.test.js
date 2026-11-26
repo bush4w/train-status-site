@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { stations, stationsMap } from './stations'
-import { trains } from './trains'
+import { readFileSync } from 'node:fs'
 import { meta } from './meta'
+
+// 车站/车次数据走 public/data 运行时加载（全量时数 MB，不进主包）
+const stations = JSON.parse(readFileSync('public/data/stations.json', 'utf8'))
+const trains = JSON.parse(readFileSync('public/data/trains.json', 'utf8'))
+const stationsMap = Object.fromEntries(stations.map((s) => [s.code, s]))
 
 const toMin = (hm) => (hm == null ? null : Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5)))
 

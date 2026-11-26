@@ -4,24 +4,18 @@ import ControlPanel from './components/ControlPanel'
 import TrainDetail from './components/TrainDetail'
 import SearchBox from './components/SearchBox'
 import Timeline from './components/Timeline'
-import { trains } from './data/trains'
-import { stations, stationsMap } from './data/stations'
+import TrainDiagram from './components/TrainDiagram'
 import { meta } from './data/meta'
 import { statusColor, ON_TIME_COLOR, DELAY_COLOR } from './lib/status'
 import { computeTrainPosition } from './lib/position'
 import { TRAIN_TYPES } from './lib/train-type'
-import TrainDiagram from './components/TrainDiagram'
 import { CORRIDORS, resolveCorridor, corridorOfTrain } from './lib/diagram'
 
-// 走廊静态解析（站名 → 坐标），数据不变只需算一次
-const stationsByName = Object.fromEntries(stations.map((s) => [s.name, s]))
-const ALL_CORRIDORS = CORRIDORS.map((c) => resolveCorridor(c, stationsByName)).filter(
-  (c) => c.stations.length >= 3,
-)
-
 export default function App() {
-  // 时钟默认「实时」模式：直接对接系统墙钟（不漂移、不倍速）；
-  // 选择倍速或拖动时间轴 → 进入模拟模式（探索运行图用）
+  // 路网数据运行时加载（全量车次数 MB，不进主包）
+  const [data, setData] = useState(null)
+  const [dataError, setDataError] = useState(null)
+  // 时钟默认「实时」模式：直接对接系统墙钟（不漂移、不倍速）
   const [simTime, setSimTime] = useState(() => new Date())
   const [liveMode, setLiveMode] = useState(true)
   const [speed, setSpeed] = useState(120)
@@ -32,9 +26,29 @@ export default function App() {
   const [legendOpen, setLegendOpen] = useState(true)
   const [liveDelays, setLiveDelays] = useState(null)
   const [corridorId, setCorridorId] = useState(null)
-  const corridor = ALL_CORRIDORS.find((c) => c.id === corridorId) || null
   const liveModeRef = useRef(liveMode)
   liveModeRef.current = liveMode
+
+  useEffect(() => {
+    let alive = true
+    Promise.all([
+      fetch('data/stations.json').then((r) => (r.ok ? r.json() : Promise.reject(new Error('stations.json 加载失败')))),
+      fetch('data/trains.json').then((r) => (r.ok ? r.json() : Promise.reject(new Error('trains.json 加载失败')))),
+    ])
+      .then(([stations, trains]) => {
+        if (!alive) return
+        setData({
+          stations,
+          trains,
+          stationsMap: Object.fromEntries(stations.map((s) => [s.code, s])),
+          stationsByName: Object.fromEntries(stations.map((s) => [s.name, s])),
+        })
+      })
+      .catch((e) => alive && setDataError(e.message))
+    return () => {
+      alive = false
+    }
+  }, [])
 
   // 时钟推进：实时=每 tick 取系统时间；模拟=按倍速推进（拖动时间轴时暂停）
   useEffect(() => {
@@ -46,8 +60,7 @@ export default function App() {
     return () => clearInterval(id)
   }, [playing, speed, scrubbing])
 
-  // 实时晚点轮询：读取 auto-refresh 生成的 live/delays.json（45–75s 随机间隔；
-  // 无数据源时静默使用内置快照）
+  // 实时晚点轮询：读取 auto-refresh 生成的 live/delays.json（45–75s 随机间隔）
   useEffect(() => {
     let alive = true
     let timer
@@ -70,20 +83,27 @@ export default function App() {
     }
   }, [])
 
-  // 有效车次 = 构建时数据 ⊕ 实时晚点（按车次号覆盖）
+  // 有效车次 = 构建时数据 ⊕ 实时晚点
+  const trains = data?.trains
   const effectiveTrains = useMemo(() => {
+    if (!trains) return []
     if (!liveDelays?.delays) return trains
     return trains.map((t) =>
       liveDelays.delays[t.no] != null && liveDelays.delays[t.no] !== t.delay
         ? { ...t, delay: liveDelays.delays[t.no] }
         : t,
     )
-  }, [liveDelays])
+  }, [trains, liveDelays])
 
-  const simMinutes =
-    simTime.getHours() * 60 + simTime.getMinutes() + simTime.getSeconds() / 60
+  // 走廊解析（数据加载后）
+  const allCorridors = useMemo(() => {
+    if (!data) return []
+    return CORRIDORS.map((c) => resolveCorridor(c, data.stationsByName)).filter((c) => c.stations.length >= 3)
+  }, [data])
+  const corridor = allCorridors.find((c) => c.id === corridorId) || null
 
-  // 回到实时：切回墙钟模式并对齐当前时间
+  const simMinutes = simTime.getHours() * 60 + simTime.getMinutes() + simTime.getSeconds() / 60
+
   const goLive = () => {
     setLiveMode(true)
     setSimTime(new Date())
@@ -93,7 +113,7 @@ export default function App() {
     setSpeed(s)
   }
   const scrubTo = (m) => {
-    setLiveMode(false) // 拖动时间轴即离开实时模式
+    setLiveMode(false)
     const d = new Date()
     d.setHours(0, 0, 0, 0)
     d.setTime(d.getTime() + m * 60000)
@@ -104,19 +124,20 @@ export default function App() {
   const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 
   const selectedTrain = effectiveTrains.find((t) => t.no === selectedNo) || null
-  // 选中车次所属走廊（详情面板"查看线路运行图"入口）
-  const selectedTrainCorridor = selectedTrain ? corridorOfTrain(selectedTrain, ALL_CORRIDORS) : null
-  // 晚点 Top5（全国模式车次多，图例只列晚点前列）
-  const lateTop = [...effectiveTrains]
-    .filter((t) => t.delay > 0)
-    .sort((a, b) => b.delay - a.delay)
-    .slice(0, 5)
+  const selectedTrainCorridor = selectedTrain ? corridorOfTrain(selectedTrain, allCorridors) : null
+  const lateTop = useMemo(
+    () =>
+      [...effectiveTrains]
+        .filter((t) => t.delay > 0)
+        .sort((a, b) => b.delay - a.delay)
+        .slice(0, 5),
+    [effectiveTrains],
+  )
 
-  // F5 搜索定位：车次→当前位置；车站→站点坐标
   const flySeq = flyTarget?.seq ?? 0
   const pickTrain = (t) => {
     setSelectedNo(t.no)
-    const pos = computeTrainPosition(t, stationsMap, simMinutes)
+    const pos = computeTrainPosition(t, data.stationsMap, simMinutes)
     setFlyTarget({ lat: pos.lat, lng: pos.lng, zoom: 9, seq: flySeq + 1 })
   }
   const pickStation = (s) => {
@@ -125,9 +146,22 @@ export default function App() {
 
   const delayAsOf = liveDelays?.delayAsOf ?? meta.delayAsOf
 
+  if (dataError) {
+    return (
+      <div className="boot">
+        路网数据加载失败：{dataError}
+        <br />
+        请先运行 <code>node scripts/fetch-railway-data.mjs</code> 生成 public/data/
+      </div>
+    )
+  }
+  if (!data) return <div className="boot">加载路网数据…</div>
+
   return (
     <div className="app">
       <TrainMap
+        stations={data.stations}
+        stationsMap={data.stationsMap}
         trains={effectiveTrains}
         simMinutes={simMinutes}
         selectedNo={selectedNo}
@@ -147,8 +181,14 @@ export default function App() {
         onReset={goLive}
         onCorridor={setCorridorId}
       >
-        <SearchBox trains={effectiveTrains} onPickTrain={pickTrain} onPickStation={pickStation} />
+        <SearchBox stations={data.stations} trains={effectiveTrains} onPickTrain={pickTrain} onPickStation={pickStation} />
       </ControlPanel>
+      <Timeline
+        minutes={simMinutes}
+        onScrub={scrubTo}
+        onScrubStart={() => setScrubbing(true)}
+        onScrubEnd={() => setScrubbing(false)}
+      />
       {corridor && (
         <TrainDiagram
           corridor={corridor}
@@ -162,15 +202,10 @@ export default function App() {
           onClose={() => setCorridorId(null)}
         />
       )}
-      <Timeline
-        minutes={simMinutes}
-        onScrub={scrubTo}
-        onScrubStart={() => setScrubbing(true)}
-        onScrubEnd={() => setScrubbing(false)}
-      />
       {selectedTrain && (
         <TrainDetail
           train={selectedTrain}
+          stationsMap={data.stationsMap}
           simMinutes={simMinutes}
           onClose={() => setSelectedNo(null)}
           onDiagram={selectedTrainCorridor ? () => setCorridorId(selectedTrainCorridor.id) : null}
@@ -204,8 +239,9 @@ export default function App() {
               <span>晚点</span>
             </div>
             <div className="item muted">
-              在图车次 {effectiveTrains.length} · 车站 {meta.counts?.stations ?? stations.length}
+              在图车次 {effectiveTrains.length} · 车站 {meta.counts?.stations ?? data.stations.length}
             </div>
+            <div className="item muted">缩放分级：远景大站快车，放大显示更多列车与车站</div>
             {lateTop.length === 0 && <div className="item muted">抽样车次当前均正点</div>}
             {lateTop.map((t) => (
               <div

@@ -1,11 +1,10 @@
 import { computeTrainPosition } from '../lib/position'
-import { stationsMap } from '../data/stations'
 import { statusColor, STATUS_TEXT } from '../lib/status'
 import { trainTypeInfo } from '../lib/train-type'
 
 // F3 车次详情：点击列车后展示车次、当前区间、正晚点与全程时刻表
 // 时刻表高亮当前所在站（运行中时同时标记前方站）
-export default function TrainDetail({ train, simMinutes, onClose, onDiagram, diagramName }) {
+export default function TrainDetail({ train, stationsMap, simMinutes, onClose, onDiagram, diagramName }) {
   const pos = computeTrainPosition(train, stationsMap, simMinutes)
   const color = statusColor(pos.delay)
   const type = trainTypeInfo(train.no)

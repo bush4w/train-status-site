@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import {
   haversineKm,
   resolveCorridor,
@@ -8,8 +9,11 @@ import {
   corridorOfTrain,
   CORRIDORS,
 } from './diagram'
-import { stations, stationsMap } from '../data/stations'
-import { trains } from '../data/trains'
+
+// 运行时数据（public/data），与 App 加载源一致
+const stations = JSON.parse(readFileSync('public/data/stations.json', 'utf8'))
+const trains = JSON.parse(readFileSync('public/data/trains.json', 'utf8'))
+const stationsMap = Object.fromEntries(stations.map((s) => [s.code, s]))
 
 const byName = Object.fromEntries(stations.map((s) => [s.name, s]))
 

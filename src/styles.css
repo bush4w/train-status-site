@@ -608,54 +608,71 @@ button {
   padding: 0 2px;
 }
 
-/* ---------- 列车标记（车型胶囊 + 状态光环） ---------- */
-.train-pill {
+/* ---------- 列车标记（车型 SVG 剪影 + 状态光环） ---------- */
+.veh-wrap {
+  cursor: pointer;
+}
+
+.veh-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.veh {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+
+.veh-label {
+  font-size: 9px;
+  line-height: 11px;
+  color: #333;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 0 3px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+/* 晚点：橙色呼吸光晕 */
+.veh-wrap.delayed .veh {
+  animation: veh-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes veh-pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 rgba(230, 126, 34, 0.8));
+  }
+  50% {
+    filter: drop-shadow(0 0 4px rgba(230, 126, 34, 0.9));
+  }
+}
+
+/* 选中：主题蓝光晕 + 放大 */
+.veh-wrap.sel .veh {
+  filter: drop-shadow(0 0 3px rgba(74, 111, 165, 0.95));
+  transform: scale(1.18);
+}
+
+/* 启动/加载态 */
+.boot {
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 20px;
-  padding: 0 6px;
-  background: var(--tc);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  border: 1.5px solid #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  color: #666;
+  background: #f5f7fa;
 }
 
-/* 形状语言：动车组=胶囊（流线头），普速=圆角方形（机车轮廓） */
-.train-pill.shape-emu {
-  border-radius: 10px;
-}
-
-.train-pill.shape-loco {
-  border-radius: 5px;
-}
-
-/* 晚点：橙色描边 + 呼吸脉冲 */
-.train-pill.delayed {
-  border-color: var(--delay);
-  animation: delay-pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes delay-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgba(230, 126, 34, 0.55), 0 1px 4px rgba(0, 0, 0, 0.45);
-  }
-  50% {
-    box-shadow: 0 0 0 5px rgba(230, 126, 34, 0), 0 1px 4px rgba(0, 0, 0, 0.45);
-  }
-}
-
-/* 选中：主题蓝外环 + 放大 */
-.train-pill.selected {
-  outline: 2.5px solid var(--primary);
-  outline-offset: 1px;
-  transform: scale(1.12);
+.boot code {
+  background: #eef2f7;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
 }
 
 /* ---------- 线路选择下拉（控制面板） ---------- */
