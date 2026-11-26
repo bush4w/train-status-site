@@ -2,10 +2,13 @@ import { useState, useEffect } from 'react'
 import TrainMap from './components/TrainMap'
 import ControlPanel from './components/ControlPanel'
 import TrainDetail from './components/TrainDetail'
+import SearchBox from './components/SearchBox'
+import Timeline from './components/Timeline'
 import { trains } from './data/trains'
-import { stations } from './data/stations'
+import { stations, stationsMap } from './data/stations'
 import { meta } from './data/meta'
 import { statusColor, ON_TIME_COLOR, DELAY_COLOR } from './lib/status'
+import { computeTrainPosition } from './lib/position'
 
 export default function App() {
   // 模拟时钟默认对齐真实当前时间：列车位置与正晚点快照同日同刻，消除班次错位
@@ -13,15 +16,17 @@ export default function App() {
   const [speed, setSpeed] = useState(120)
   const [playing, setPlaying] = useState(true)
   const [selectedNo, setSelectedNo] = useState(null)
+  const [scrubbing, setScrubbing] = useState(false)
+  const [flyTarget, setFlyTarget] = useState(null)
 
-  // 模拟时钟：每 100ms 推进 speed 倍
+  // 模拟时钟：每 100ms 推进 speed 倍（拖动时间轴时暂停推进）
   useEffect(() => {
-    if (!playing) return
+    if (!playing || scrubbing) return
     const id = setInterval(() => {
       setSimTime((t) => new Date(t.getTime() + speed * 100))
     }, 100)
     return () => clearInterval(id)
-  }, [playing, speed])
+  }, [playing, speed, scrubbing])
 
   const simMinutes =
     simTime.getHours() * 60 + simTime.getMinutes() + simTime.getSeconds() / 60
@@ -38,9 +43,33 @@ export default function App() {
     .sort((a, b) => b.delay - a.delay)
     .slice(0, 5)
 
+  // F6 时间轴拖动：设置当日时刻
+  const scrubTo = (m) => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    d.setTime(d.getTime() + m * 60000)
+    setSimTime(d)
+  }
+
+  // F5 搜索定位：车次→当前位置；车站→站点坐标
+  const flySeq = flyTarget?.seq ?? 0
+  const pickTrain = (t) => {
+    setSelectedNo(t.no)
+    const pos = computeTrainPosition(t, stationsMap, simMinutes)
+    setFlyTarget({ lat: pos.lat, lng: pos.lng, zoom: 9, seq: flySeq + 1 })
+  }
+  const pickStation = (s) => {
+    setFlyTarget({ lat: s.lat, lng: s.lng, zoom: 10, seq: flySeq + 1 })
+  }
+
   return (
     <div className="app">
-      <TrainMap simMinutes={simMinutes} selectedNo={selectedNo} onSelect={setSelectedNo} />
+      <TrainMap
+        simMinutes={simMinutes}
+        selectedNo={selectedNo}
+        onSelect={setSelectedNo}
+        flyTarget={flyTarget}
+      />
       <ControlPanel
         time={fmtTime(simTime)}
         speed={speed}
@@ -48,6 +77,14 @@ export default function App() {
         onSpeed={setSpeed}
         onToggle={() => setPlaying((p) => !p)}
         onReset={reset}
+      >
+        <SearchBox onPickTrain={pickTrain} onPickStation={pickStation} />
+      </ControlPanel>
+      <Timeline
+        minutes={simMinutes}
+        onScrub={scrubTo}
+        onScrubStart={() => setScrubbing(true)}
+        onScrubEnd={() => setScrubbing(false)}
       />
       {selectedTrain && (
         <TrainDetail
