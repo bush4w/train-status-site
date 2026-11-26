@@ -7,15 +7,9 @@ import { stations } from './data/stations'
 import { meta } from './data/meta'
 import { statusColor, ON_TIME_COLOR, DELAY_COLOR } from './lib/status'
 
-const START_HOUR = 9
-const START_MIN = 30
-
 export default function App() {
-  const [simTime, setSimTime] = useState(() => {
-    const d = new Date()
-    d.setHours(START_HOUR, START_MIN, 0, 0)
-    return d
-  })
+  // 模拟时钟默认对齐真实当前时间：列车位置与正晚点快照同日同刻，消除班次错位
+  const [simTime, setSimTime] = useState(() => new Date())
   const [speed, setSpeed] = useState(120)
   const [playing, setPlaying] = useState(true)
   const [selectedNo, setSelectedNo] = useState(null)
@@ -32,11 +26,7 @@ export default function App() {
   const simMinutes =
     simTime.getHours() * 60 + simTime.getMinutes() + simTime.getSeconds() / 60
 
-  const reset = () => {
-    const d = new Date()
-    d.setHours(START_HOUR, START_MIN, 0, 0)
-    setSimTime(d)
-  }
+  const reset = () => setSimTime(new Date()) // 回到现在（真实时间）
 
   const pad = (n) => String(n).padStart(2, '0')
   const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`

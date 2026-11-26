@@ -41,9 +41,12 @@ const args = Object.fromEntries(
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const politeDelay = () => sleep(1000 + Math.random() * 2000) // 限流：1–3s
 
-function tomorrow() {
-  const d = new Date(Date.now() + 86400000)
-  return d.toISOString().slice(0, 10)
+// 默认抓"当日"运行图：与正晚点查询（zwdch 无日期参数、恒为当日运行）同日，
+// 消除时刻表日期与晚点快照日期错位（本地时区 = 北京时间）
+function todayStr() {
+  const d = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
 // ---------- 步骤 1：车站表 ----------
@@ -414,7 +417,7 @@ async function main() {
   const stations = mergeTelecodes(allStations)
   console.log(`✓ 京沪线 ${stations.length} 站合并真实电报码`)
 
-  const date = args.date || tomorrow()
+  const date = args.date || todayStr()
   let trains = null
   let timetableSource = DATA_SOURCES.timetable
 
