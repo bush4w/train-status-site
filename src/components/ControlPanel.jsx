@@ -1,8 +1,9 @@
 const SPEEDS = [1, 30, 60, 120, 300, 600]
 
-export default function ControlPanel({ time, speed, playing, onSpeed, onToggle, onReset }) {
+export default function ControlPanel({ time, speed, playing, onSpeed, onToggle, onReset, children }) {
   return (
     <div className="panel">
+      {children}
       <div className="panel-time">
         <span className="label">模拟时间</span>
         <span className="time">{time}</span>

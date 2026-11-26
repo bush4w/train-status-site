@@ -35,7 +35,7 @@ function tooltipHtml(t, simMinutes) {
   )
 }
 
-export default function TrainMap({ simMinutes, selectedNo, onSelect }) {
+export default function TrainMap({ simMinutes, selectedNo, onSelect, flyTarget }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef({})
@@ -120,6 +120,13 @@ export default function TrainMap({ simMinutes, selectedNo, onSelect }) {
       mapRef.current = null
     }
   }, [])
+
+  // 搜索定位飞行（seq 变化触发）
+  useEffect(() => {
+    if (!flyTarget || !mapRef.current) return
+    const p = gcj(flyTarget.lat, flyTarget.lng)
+    mapRef.current.flyTo([p.lat, p.lng], flyTarget.zoom, { duration: 1.2 })
+  }, [flyTarget])
 
   // 选中态高亮
   useEffect(() => {
