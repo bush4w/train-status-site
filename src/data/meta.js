@@ -13,5 +13,5 @@ export const meta = {
     "timetable": "12306 queryTrainInfo 抓取（2026-11-26 发车日，免 cookie，城市级坐标）",
     "delay": "12306 正晚点实测（zwdch 抽样）"
   },
-  "delayAsOf": "2026-11-26 16:49"
+  "delayAsOf": "2026-11-26 17:20"
 }

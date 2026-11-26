@@ -175,6 +175,27 @@ function selectNationalTrains(catalog, geocodedByName) {
       selected.push(t)
     }
   }
+
+  // --all-emu：全量动车（X/G/T/K/D/C/S 字头全部收录），普速仍按配额抽样
+  if (args['all-emu']) {
+    for (const t of eligible) {
+      if (EMU_LETTERS.has(String(t.code[0] ?? '').toUpperCase())) push(t)
+    }
+    const convQuotas = { Z: 12, N: 8, V: 14, Y: 4, L: 2 }
+    for (const [ty, quota] of Object.entries(convQuotas)) {
+      const pool = eligible.filter((t) => trainType(t.code) === ty && !seen.has(t.train_no))
+      if (!pool.length) continue
+      const stride = Math.max(1, Math.floor(pool.length / quota))
+      let count = 0
+      for (let i = 0; i < pool.length && count < quota; i += stride) {
+        const before = selected.length
+        push(pool[i])
+        if (selected.length > before) count++
+      }
+    }
+    return selected
+  }
+
   // 固定包含京沪标杆（动态选取，适应车次换编）
   for (const t of pickJinghuFlagships(eligible)) push(t)
   // 走廊端点 OD 加密：每条客运走廊选至多 5 趟起讫匹配车次（运行图有车可画）
@@ -549,18 +570,11 @@ function validate(stations, trains) {
 function emit(stations, trains, meta) {
   mkdirSync('src/data', { recursive: true })
   const header = `// 由 scripts/fetch-railway-data.mjs 生成（${meta.generatedAt}）——请勿手改，重跑脚本更新\n`
-  const stationJs =
-    header +
-    `// 车站坐标：京沪高铁 23 站为精确整理值（precise:true）；其余为城市级近似（±5km，含站名哈希微偏移）\n\n` +
-    `export const stations = ${JSON.stringify(stations)}\n\n` +
-    `export const stationsMap = Object.fromEntries(stations.map((s) => [s.code, s]))\n`
-  const trainJs =
-    header +
-    `// 车次时刻表与晚点（来源见 meta.js）\n\n` +
-    `export const trains = ${JSON.stringify(trains)}\n`
   const metaJs = header + `export const meta = ${JSON.stringify(meta, null, 2)}\n`
-  writeFileSync('src/data/stations.js', stationJs)
-  writeFileSync('src/data/trains.js', trainJs)
+  // 车站/车次体积大（全量时数 MB），走 public/data 运行时加载，不进主包
+  mkdirSync('public/data', { recursive: true })
+  writeFileSync('public/data/stations.json', JSON.stringify(stations))
+  writeFileSync('public/data/trains.json', JSON.stringify(trains))
   writeFileSync('src/data/meta.js', metaJs)
   // 实时晚点数据文件：前端轮询用（配合 auto-refresh 定时刷新，dev/preview/静态部署均生效）
   mkdirSync('public/live', { recursive: true })
@@ -572,7 +586,9 @@ function emit(stations, trains, meta) {
       delays: Object.fromEntries(trains.map((t) => [t.no, t.delay])),
     }),
   )
-  console.log(`✓ 已生成 src/data/* + public/live/delays.json（车站 ${stations.length}，车次 ${trains.length}）`)
+  console.log(
+    `✓ 已生成 public/data/{stations,trains}.json + src/data/meta.js + public/live/delays.json（车站 ${stations.length}，车次 ${trains.length}）`,
+  )
 }
 
 function saveSnapshot(data) {
