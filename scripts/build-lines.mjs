@@ -13,6 +13,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs'
 import { parseStationNameJs } from './lib/station-parser.mjs'
+import { isLayerTile } from './lib/tile-files.mjs'
 import { geocodeStations } from './lib/geocode.mjs'
 import { JINGHU_STATIONS } from './data/jinghu-line.mjs'
 import { buildOsmStationIndex, matchStation } from './lib/station-match.mjs'
@@ -37,7 +38,7 @@ function loadJson(f) {
 function tileFiles(prefix) {
   if (!existsSync(TILES_DIR)) return []
   return readdirSync(TILES_DIR)
-    .filter((f) => f.startsWith(`${prefix}_s`) && f.endsWith('.json'))
+    .filter((f) => isLayerTile(f, prefix))
     .sort()
 }
 
@@ -123,8 +124,8 @@ function main() {
     return
   }
 
-  const hsr = buildLines('hsr_', HSR_TOL, '高铁线路')
-  const conv = buildLines('conv_', CONV_TOL, '普速干线')
+  const hsr = buildLines('hsr', HSR_TOL, '高铁线路')
+  const conv = buildLines('conv', CONV_TOL, '普速干线')
 
   const lines = {
     attribution: '© OpenStreetMap contributors — ODbL',
