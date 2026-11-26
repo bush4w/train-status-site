@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import L from 'leaflet'
-import { stations, linePoints, stationsMap } from '../data/stations'
+import { stations, stationsMap } from '../data/stations'
 import { trains } from '../data/trains'
 import { computeTrainPosition } from '../lib/position'
 import { wgs84ToGcj02 } from '../lib/coord'
@@ -8,6 +8,10 @@ import { statusColor } from '../lib/status'
 
 // 高德瓦片使用 GCJ-02，所有 WGS-84 坐标先转换再交给 Leaflet
 const gcj = (lat, lng) => wgs84ToGcj02(lat, lng)
+const gcjOf = (s) => {
+  const p = gcj(s.lat, s.lng)
+  return [p.lat, p.lng]
+}
 
 function trainIcon(t, selected) {
   return L.divIcon({
@@ -18,100 +22,114 @@ function trainIcon(t, selected) {
   })
 }
 
+function tooltipHtml(t, simMinutes) {
+  const pos = computeTrainPosition(t, stationsMap, simMinutes)
+  return (
+    `<b>${t.no}</b>` +
+    (pos.delay
+      ? `<span style="color:#e67e22">（晚点 ${pos.delay} 分）</span>`
+      : '<span style="color:#27ae60">（正点）</span>') +
+    `<br/>${pos.label}` +
+    (pos.nextStation ? `<br/>预计 ${pos.arrTime} 到 ${pos.nextStation}` : '') +
+    `<br/><span style="color:#999">点击查看详情</span>`
+  )
+}
+
 export default function TrainMap({ simMinutes, selectedNo, onSelect }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef({})
-  // onSelect 每次渲染都是新闭包，用 ref 透传，避免地图重复初始化
+  // simMinutes/onSelect 每帧变化，用 ref 透传，地图仅初始化一次
+  const simRef = useRef(simMinutes)
+  simRef.current = simMinutes
   const onSelectRef = useRef(onSelect)
   onSelectRef.current = onSelect
 
-  // 初始化地图（仅一次）
   useEffect(() => {
     const map = L.map(containerRef.current, {
-      center: gcj(34.5, 117.0),
-      zoom: 6,
+      center: gcj(35.2, 108.5),
+      zoom: 5,
       minZoom: 4,
+      preferCanvas: true, // M4：全国数千要素走 Canvas 渲染
     })
 
-    // 高德中文瓦片（国内访问快）；如需国际版可换 OpenStreetMap，见 coord.js 说明
     L.tileLayer(
       'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
-      {
-        subdomains: ['1', '2', '3', '4'],
-        maxZoom: 18,
-        attribution: '&copy; 高德地图',
-      },
+      { subdomains: ['1', '2', '3', '4'], maxZoom: 18, attribution: '&copy; 高德地图' },
     ).addTo(map)
 
-    // 线路
-    L.polyline(linePoints.map((p) => [gcj(p.lat, p.lng).lat, gcj(p.lat, p.lng).lng]), {
-      color: '#4a6fa5',
-      weight: 3,
-      opacity: 0.7,
-    }).addTo(map)
+    // 每趟车的经停连线（细线成网，点击可选中车次）
+    for (const t of trains) {
+      const pts = t.stops.map((s) => stationsMap[s.code]).filter(Boolean).map(gcjOf)
+      if (pts.length < 2) continue
+      L.polyline(pts, { color: '#4a6fa5', weight: 1.2, opacity: 0.35 })
+        .on('click', () => onSelectRef.current(t.no))
+        .addTo(map)
+    }
 
-    // 车站
-    stations.forEach((s) => {
-      const p = gcj(s.lat, s.lng)
-      L.circleMarker([p.lat, p.lng], {
-        radius: 4,
+    // 车站分层：精确坐标站常驻；城市级站 zoom≥7 才显示（减噪）
+    const preciseLayer = L.layerGroup()
+    const cityLayer = L.layerGroup()
+    for (const s of stations) {
+      const m = L.circleMarker(gcjOf(s), {
+        radius: s.precise ? 4 : 2.5,
         color: '#fff',
-        weight: 1.5,
+        weight: s.precise ? 1.5 : 0.8,
         fillColor: '#333',
         fillOpacity: 1,
-      })
-        .bindTooltip(s.name)
-        .addTo(map)
-    })
+      }).bindTooltip(s.name)
+      ;(s.precise ? preciseLayer : cityLayer).addLayer(m)
+    }
+    preciseLayer.addTo(map)
+    const syncCityLayer = () => {
+      if (map.getZoom() >= 7) {
+        if (!map.hasLayer(cityLayer)) cityLayer.addTo(map)
+      } else if (map.hasLayer(cityLayer)) {
+        map.removeLayer(cityLayer)
+      }
+    }
+    map.on('zoomend', syncCityLayer)
+    syncCityLayer()
 
-    // 列车 marker（初始置于地图外，随后由 simMinutes 驱动）
-    trains.forEach((t) => {
+    // 列车 marker：tooltip 用函数内容（打开时实时计算，无需反复重绑）
+    for (const t of trains) {
       const m = L.marker([0, 0], { icon: trainIcon(t, false) }).addTo(map)
-      // F3：点击列车打开详情（marker 默认不向地图冒泡，不会误触发取消选中）
+      m.bindTooltip(() => tooltipHtml(t, simRef.current))
       m.on('click', () => onSelectRef.current(t.no))
       markersRef.current[t.no] = m
-    })
+    }
 
-    // 点击地图空白处关闭详情
     map.on('click', () => onSelectRef.current(null))
+
+    // 位置刷新节流：500ms 一跳（200+ 车 × 每帧 setState 太重）
+    const updatePositions = () => {
+      for (const t of trains) {
+        const marker = markersRef.current[t.no]
+        if (!marker) continue
+        const pos = computeTrainPosition(t, stationsMap, simRef.current)
+        marker.setLatLng(gcj(pos.lat, pos.lng))
+      }
+    }
+    updatePositions()
+    const timer = setInterval(updatePositions, 500)
 
     mapRef.current = map
     return () => {
+      clearInterval(timer)
       map.remove()
       mapRef.current = null
     }
   }, [])
 
-  // 随时间推进更新列车位置
-  useEffect(() => {
-    if (!mapRef.current) return
-    trains.forEach((t) => {
-      const marker = markersRef.current[t.no]
-      if (!marker) return
-      const pos = computeTrainPosition(t, stationsMap, simMinutes)
-      const p = gcj(pos.lat, pos.lng)
-      marker.setLatLng([p.lat, p.lng])
-      marker.unbindTooltip()
-      const info =
-        `<b>${t.no}</b>` +
-        (pos.delay ? `<span style="color:#e67e22">（晚点 ${pos.delay} 分）</span>` : '<span style="color:#27ae60">（正点）</span>') +
-        `<br/>${pos.label}` +
-        (pos.nextStation ? `<br/>预计 ${pos.arrTime} 到 ${pos.nextStation}` : '') +
-        `<br/><span style="color:#999">点击查看详情</span>`
-      marker.bindTooltip(info)
-    })
-  }, [simMinutes])
-
   // 选中态高亮
   useEffect(() => {
-    trains.forEach((t) => {
+    for (const t of trains) {
       const marker = markersRef.current[t.no]
-      if (!marker) return
+      if (!marker) continue
       const selected = t.no === selectedNo
       marker.setIcon(trainIcon(t, selected))
       marker.setZIndexOffset(selected ? 1000 : 0)
-    })
+    }
   }, [selectedNo])
 
   return <div ref={containerRef} className="map-container" />

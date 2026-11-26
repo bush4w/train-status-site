@@ -32,6 +32,11 @@ export default function App() {
   const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 
   const selectedTrain = trains.find((t) => t.no === selectedNo) || null
+  // 晚点 Top5（全国模式车次多，图例只列晚点前列）
+  const lateTop = [...trains]
+    .filter((t) => t.delay > 0)
+    .sort((a, b) => b.delay - a.delay)
+    .slice(0, 5)
 
   return (
     <div className="app">
@@ -58,7 +63,11 @@ export default function App() {
           <span className="dot" style={{ background: DELAY_COLOR }} />
           <span>晚点</span>
         </div>
-        {trains.map((t) => (
+        <div className="item muted">
+          在图车次 {trains.length} · 车站 {meta.counts?.stations ?? stations.length}
+        </div>
+        {lateTop.length === 0 && <div className="item muted">抽样车次当前均正点</div>}
+        {lateTop.map((t) => (
           <div
             className={`item clickable${t.no === selectedNo ? ' active' : ''}`}
             key={t.no}
@@ -66,19 +75,14 @@ export default function App() {
           >
             <span className="dot" style={{ background: statusColor(t.delay) }} />
             <span>
-              {t.no}
-              {t.delay ? `（晚点 ${t.delay} 分）` : ''}
+              {t.no}（晚点 {t.delay} 分）
             </span>
           </div>
         ))}
         <div className="item muted">
-          {meta.line} {stations.length} 站 · 电报码来自 12306
+          正晚点：{meta.delayAsOf ? `抽样实测于 ${meta.delayAsOf}` : meta.sources.delay}
         </div>
-        <div className="item muted">时刻表：{meta.sources.timetable}</div>
-        <div className="item muted">
-          正晚点：{meta.delayAsOf ? `实测于 ${meta.delayAsOf}` : meta.sources.delay}
-        </div>
-        <div className="item muted">非官方实时数据，仅供参考</div>
+        <div className="item muted">数据 {meta.generatedAt} · 非官方实时，仅供参考</div>
       </div>
     </div>
   )

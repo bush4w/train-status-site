@@ -38,7 +38,9 @@ function log(msg) {
 
 function runPipeline() {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, ['scripts/fetch-railway-data.mjs'], { stdio: 'inherit' })
+    // 定时轮次只做正晚点抽样刷新（~25 请求/轮，轻量防风控）；
+    // 时刻表全量刷新请手动跑 npm run fetch（运行图调整周期约数周一次）
+    const child = spawn(process.execPath, ['scripts/fetch-railway-data.mjs', '--delays-only'], { stdio: 'inherit' })
     child.on('close', (code) => resolve(code === 0))
   })
 }
