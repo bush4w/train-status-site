@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import { stations, stationsMap } from '../data/stations'
-import { trains } from '../data/trains'
+import { railLines } from '../data/lines'
 import { computeTrainPosition } from '../lib/position'
 import { wgs84ToGcj02 } from '../lib/coord'
 import { trainTypeInfo } from '../lib/train-type'
@@ -13,8 +13,7 @@ const gcjOf = (s) => {
   return [p.lat, p.lng]
 }
 
-// 双通道编码标记：填充色=车型（车次编排规定），光环=正晚点（晚点橙色脉冲），蓝环=选中
-// 形状语言：动车组=胶囊（流线头），普速=圆角方形（机车轮廓）
+// 双通道编码标记：填充色+形状=车型（新版车次编排规定），光环=正晚点，蓝环=选中
 function trainIcon(t, selected) {
   const info = trainTypeInfo(t.no)
   const w = Math.max(26, 13 + String(t.no).length * 7)
@@ -36,8 +35,9 @@ function trainIcon(t, selected) {
 
 function tooltipHtml(t, simMinutes) {
   const pos = computeTrainPosition(t, stationsMap, simMinutes)
+  const type = trainTypeInfo(t.no)
   return (
-    `<b>${t.no}</b>` +
+    `<b>${t.no}</b> <span style="color:${type.color}">${type.label}</span>` +
     (pos.delay
       ? `<span style="color:#e67e22">（晚点 ${pos.delay} 分）</span>`
       : '<span style="color:#27ae60">（正点）</span>') +
@@ -47,36 +47,49 @@ function tooltipHtml(t, simMinutes) {
   )
 }
 
-export default function TrainMap({ simMinutes, selectedNo, onSelect, flyTarget }) {
+export default function TrainMap({ trains, simMinutes, selectedNo, onSelect, flyTarget }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef({})
-  // simMinutes/onSelect 每帧变化，用 ref 透传，地图仅初始化一次
+  // 每帧/每次轮询变化的量用 ref 透传，地图仅初始化一次
   const simRef = useRef(simMinutes)
   simRef.current = simMinutes
   const onSelectRef = useRef(onSelect)
   onSelectRef.current = onSelect
+  const trainsRef = useRef(trains)
+  trainsRef.current = trains
 
   useEffect(() => {
     const map = L.map(containerRef.current, {
       center: gcj(35.2, 108.5),
       zoom: 5,
       minZoom: 4,
-      preferCanvas: true, // M4：全国数千要素走 Canvas 渲染
+      preferCanvas: true, // 全国数千要素走 Canvas 渲染
     })
 
     L.tileLayer(
       'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
-      { subdomains: ['1', '2', '3', '4'], maxZoom: 18, attribution: '&copy; 高德地图' },
+      {
+        subdomains: ['1', '2', '3', '4'],
+        maxZoom: 18,
+        attribution: '&copy; 高德地图 | 线路几何 &copy; OpenStreetMap contributors (ODbL)',
+      },
     ).addTo(map)
 
-    // 每趟车的经停连线（细线成网，点击可选中车次）
-    for (const t of trains) {
-      const pts = t.stops.map((s) => stationsMap[s.code]).filter(Boolean).map(gcjOf)
-      if (pts.length < 2) continue
-      L.polyline(pts, { color: '#4a6fa5', weight: 1.2, opacity: 0.35 })
-        .on('click', () => onSelectRef.current(t.no))
-        .addTo(map)
+    // 真实铁路线位（OSM 几何，WGS-84 → GCJ-02；普速在下、高铁在上）
+    const toGcjLine = (line) => {
+      const out = new Array(line.length)
+      for (let i = 0; i < line.length; i++) {
+        const p = gcj(line[i][0], line[i][1])
+        out[i] = [p.lat, p.lng]
+      }
+      return out
+    }
+    for (const line of railLines.conv) {
+      L.polyline(toGcjLine(line), { color: '#8a8f98', weight: 1, opacity: 0.55, interactive: false }).addTo(map)
+    }
+    for (const line of railLines.hsr) {
+      L.polyline(toGcjLine(line), { color: '#4a6fa5', weight: 1.8, opacity: 0.75, interactive: false }).addTo(map)
     }
 
     // 车站分层：精确坐标站常驻；城市级站 zoom≥7 才显示（减噪）
@@ -103,19 +116,22 @@ export default function TrainMap({ simMinutes, selectedNo, onSelect, flyTarget }
     map.on('zoomend', syncCityLayer)
     syncCityLayer()
 
-    // 列车 marker：tooltip 用函数内容（打开时实时计算，无需反复重绑）
-    for (const t of trains) {
+    // 列车 marker：tooltip 函数内容（打开时按最新晚点/时刻实时计算）
+    for (const t of trainsRef.current) {
       const m = L.marker([0, 0], { icon: trainIcon(t, false) }).addTo(map)
-      m.bindTooltip(() => tooltipHtml(t, simRef.current))
+      m.bindTooltip(() => {
+        const cur = trainsRef.current.find((x) => x.no === t.no) || t
+        return tooltipHtml(cur, simRef.current)
+      })
       m.on('click', () => onSelectRef.current(t.no))
       markersRef.current[t.no] = m
     }
 
     map.on('click', () => onSelectRef.current(null))
 
-    // 位置刷新节流：500ms 一跳（200+ 车 × 每帧 setState 太重）
+    // 位置刷新节流：500ms 一跳
     const updatePositions = () => {
-      for (const t of trains) {
+      for (const t of trainsRef.current) {
         const marker = markersRef.current[t.no]
         if (!marker) continue
         const pos = computeTrainPosition(t, stationsMap, simRef.current)
@@ -130,8 +146,21 @@ export default function TrainMap({ simMinutes, selectedNo, onSelect, flyTarget }
       clearInterval(timer)
       map.remove()
       mapRef.current = null
+      markersRef.current = {}
     }
   }, [])
+
+  // 选中态 + 晚点变化 → 重建图标（delaySig 由轮询合并后的晚点驱动）
+  const delaySig = trains.map((t) => `${t.no}:${t.delay}`).join(',')
+  useEffect(() => {
+    for (const t of trainsRef.current) {
+      const marker = markersRef.current[t.no]
+      if (!marker) continue
+      const selected = t.no === selectedNo
+      marker.setIcon(trainIcon(t, selected))
+      marker.setZIndexOffset(selected ? 1000 : 0)
+    }
+  }, [selectedNo, delaySig])
 
   // 搜索定位飞行（seq 变化触发）
   useEffect(() => {
@@ -139,17 +168,6 @@ export default function TrainMap({ simMinutes, selectedNo, onSelect, flyTarget }
     const p = gcj(flyTarget.lat, flyTarget.lng)
     mapRef.current.flyTo([p.lat, p.lng], flyTarget.zoom, { duration: 1.2 })
   }, [flyTarget])
-
-  // 选中态高亮
-  useEffect(() => {
-    for (const t of trains) {
-      const marker = markersRef.current[t.no]
-      if (!marker) continue
-      const selected = t.no === selectedNo
-      marker.setIcon(trainIcon(t, selected))
-      marker.setZIndexOffset(selected ? 1000 : 0)
-    }
-  }, [selectedNo])
 
   return <div ref={containerRef} className="map-container" />
 }

@@ -374,6 +374,44 @@ button {
   border-radius: 2px;
 }
 
+/* 实时模式标识 */
+.live-badge {
+  font-size: 10px;
+  color: var(--on-time);
+  border: 1px solid var(--on-time);
+  border-radius: 8px;
+  padding: 0 6px;
+  margin-left: auto;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.live-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--on-time);
+  margin-left: 6px;
+  vertical-align: middle;
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.legend .attribution {
+  font-size: 10px;
+  color: #bbb;
+}
+
 /* 正晚点光环示意 */
 .ring-demo {
   width: 9px;

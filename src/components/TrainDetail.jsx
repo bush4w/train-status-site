@@ -20,7 +20,9 @@ export default function TrainDetail({ train, simMinutes, onClose }) {
         </span>
         <span className="detail-route">
           {first.name} → {last.name}
-          <span className="detail-type">{type.label}</span>
+          <span className="detail-type" title={type.desc}>
+            {type.label} · {type.speed}
+          </span>
         </span>
         <button type="button" className="detail-close btn-icon" onClick={onClose} aria-label="关闭">
           ×

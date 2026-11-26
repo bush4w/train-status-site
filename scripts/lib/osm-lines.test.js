@@ -1,0 +1,51 @@
+import { describe, it, expect } from 'vitest'
+import { waysToSegments, chainSegments } from './osm-lines.mjs'
+
+// Overpass out geom 格式 fixture：3 段首尾相接 A-B-C-D + 1 段孤立 E-F
+const ELEMENTS = [
+  { type: 'way', id: 1, geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }] },
+  { type: 'way', id: 2, geometry: [{ lat: 0, lon: 1 }, { lat: 0, lon: 2 }] },
+  { type: 'way', id: 3, geometry: [{ lat: 0, lon: 3 }, { lat: 0, lon: 2 }] }, // 反向相接
+  { type: 'way', id: 4, geometry: [{ lat: 5, lon: 5 }, { lat: 5, lon: 6 }] }, // 孤立
+  { type: 'node', id: 9 }, // 非 way 应忽略
+]
+
+describe('waysToSegments', () => {
+  it('提取 way 几何，忽略非 way 与短几何', () => {
+    const segs = waysToSegments(ELEMENTS)
+    expect(segs).toHaveLength(4)
+    expect(segs[0]).toEqual([[0, 0], [0, 1]])
+  })
+})
+
+describe('chainSegments', () => {
+  it('首尾相接的段串联为一条线（含反向段），孤立段单独成线', () => {
+    const segs = waysToSegments(ELEMENTS)
+    const lines = chainSegments(segs)
+    expect(lines).toHaveLength(2)
+    const long = lines.find((l) => l.length > 2)
+    const solo = lines.find((l) => l.length === 2)
+    expect(long).toEqual([[0, 0], [0, 1], [0, 2], [0, 3]]) // 共享端点已去重
+    expect(solo).toEqual([[5, 5], [5, 6]])
+  })
+
+  it('成环线路可闭合处理（不死循环）', () => {
+    const ring = [
+      [[0, 0], [0, 1]],
+      [[0, 1], [1, 1]],
+      [[1, 1], [0, 0]],
+    ]
+    const lines = chainSegments(ring)
+    expect(lines).toHaveLength(1)
+    const pts = lines[0]
+    expect(pts.length).toBeGreaterThanOrEqual(3)
+    // 环上所有原始点都在
+    for (const p of [[0, 0], [0, 1], [1, 1]]) {
+      expect(pts.some((q) => q[0] === p[0] && q[1] === p[1])).toBe(true)
+    }
+  })
+
+  it('空输入安全', () => {
+    expect(chainSegments([])).toEqual([])
+  })
+})
