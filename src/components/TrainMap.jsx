@@ -90,6 +90,7 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
 
   const stationLayersRef = useRef(null)
   const lineLayerRef = useRef(null)
+  const lineGroupsRef = useRef({})
   const corridorLayerRef = useRef(null)
 
   // ---------- 位置解析：吸附路径优先，弦线兜底 ----------
@@ -255,9 +256,14 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
           return [p.lat, p.lng]
         })
         // 线路底图（2 条多段折线）
+        lineGroupsRef.current = {}
         const drawGroup = (key, style) => {
           const lines = (j[key] ?? []).map(toGcjLine).filter((l) => l.length >= 2)
-          if (lines.length) L.polyline(lines, { ...style, interactive: false }).addTo(lineLayerRef.current ?? (lineLayerRef.current = L.layerGroup().addTo(map)))
+          if (!lines.length) return
+          const pl = L.polyline(lines, { ...style, interactive: false }).addTo(
+            lineLayerRef.current ?? (lineLayerRef.current = L.layerGroup().addTo(map)),
+          )
+          lineGroupsRef.current[key] = { pl, baseOpacity: style.opacity }
         }
         drawGroup('conv', { color: '#8a8f98', weight: 1, opacity: 0.55 })
         drawGroup('hsr', { color: '#4a6fa5', weight: 1.8, opacity: 0.75 })
@@ -296,6 +302,7 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
         const byName = stationsByNameRef.current
         const layer = L.layerGroup().addTo(map)
         corridorLayerRef.current = layer
+        const svgRenderer = L.svg() // 走廊高亮用 SVG 渲染，支持流动虚线动画
         for (const c of CORRIDORS) {
           const sts = c.stations.map((n) => byName[n]).filter(Boolean)
           if (sts.length < 3) continue
@@ -313,18 +320,34 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
             for (let q = pts.length ? 1 : 0; q < seg.length; q++) pts.push(seg[q])
           }
           const gj = toGcjLine(pts)
-          const visible = L.polyline(gj, { color: '#e67e22', weight: 3.5, opacity: 0, interactive: false }).addTo(layer)
+          // 选中视觉：宽光晕 + 流动虚线双线（SVG 渲染，CSS 动画驱动）
+          const halo = L.polyline(gj, { color: '#f39c12', weight: 13, opacity: 0, interactive: false, renderer: svgRenderer }).addTo(layer)
+          const core = L.polyline(gj, {
+            color: '#e67e22',
+            weight: 3.5,
+            opacity: 0,
+            interactive: false,
+            renderer: svgRenderer,
+            dashArray: '10 7',
+            className: 'corridor-flow',
+          }).addTo(layer)
           L.polyline(gj, { color: '#4a6fa5', weight: 14, opacity: 0, interactive: true })
             .bindTooltip(`${c.name} · 点击查看运行图`)
             .on('mouseover', () => {
-              if (selectedCorridorRef.current !== c.id) visible.setStyle({ opacity: 0.45 })
+              if (selectedCorridorRef.current !== c.id) {
+                halo.setStyle({ opacity: 0.35 })
+                core.setStyle({ opacity: 0.7 })
+              }
             })
             .on('mouseout', () => {
-              if (selectedCorridorRef.current !== c.id) visible.setStyle({ opacity: 0 })
+              if (selectedCorridorRef.current !== c.id) {
+                halo.setStyle({ opacity: 0 })
+                core.setStyle({ opacity: 0 })
+              }
             })
             .on('click', () => onPickCorridorRef.current?.(c.id))
             .addTo(layer)
-          corridorLinesRef.current[c.id] = visible
+          corridorLinesRef.current[c.id] = { halo, core }
         }
         syncMarkers()
       })
@@ -340,8 +363,15 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
   // ---------- 选中车次/走廊变化 → 立即同步 ----------
   useEffect(() => {
     syncMarkers()
-    for (const [id, line] of Object.entries(corridorLinesRef.current)) {
-      line.setStyle({ opacity: id === selectedCorridor ? 0.9 : 0 })
+    for (const [id, { halo, core }] of Object.entries(corridorLinesRef.current)) {
+      const on = id === selectedCorridor
+      halo.setStyle({ opacity: on ? 0.32 : 0 })
+      core.setStyle({ opacity: on ? 1 : 0 })
+    }
+    // 选中走廊时底图线路淡化，突出所选
+    const dim = Boolean(selectedCorridor)
+    for (const { pl, baseOpacity } of Object.values(lineGroupsRef.current)) {
+      pl.setStyle({ opacity: dim ? baseOpacity * 0.3 : baseOpacity })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNo, selectedCorridor])

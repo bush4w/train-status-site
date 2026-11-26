@@ -655,6 +655,61 @@ button {
   transform: scale(1.18);
 }
 
+/* 走廊选中：流动虚线（SVG 渲染 + CSS 动画） */
+.corridor-flow {
+  stroke-dashoffset: 0;
+  animation: corridor-dash 1.2s linear infinite;
+}
+
+@keyframes corridor-dash {
+  to {
+    stroke-dashoffset: -34;
+  }
+}
+
+/* 已选线路标识条 */
+.corridor-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff7ed;
+  border: 1px solid #f5d0a9;
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  font-size: var(--font-sm);
+  color: #b45309;
+}
+
+.corridor-chip-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.corridor-chip button {
+  border: 1px solid #f5d0a9;
+  background: #fff;
+  color: #b45309;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: var(--font-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.corridor-chip button:hover {
+  background: #fef3e2;
+}
+
+.corridor-chip .corridor-chip-close {
+  border: none;
+  background: none;
+  font-size: 14px;
+  padding: 0 3px;
+}
+
 /* 启动/加载态 */
 .boot {
   height: 100%;

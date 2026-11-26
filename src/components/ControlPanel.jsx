@@ -12,6 +12,9 @@ export default function ControlPanel({
   onToggle,
   onReset,
   onCorridor,
+  corridor,
+  onShowCorridor,
+  onClearCorridor,
   children,
 }) {
   return (
@@ -65,6 +68,20 @@ export default function ControlPanel({
           </option>
         ))}
       </select>
+
+      {corridor && (
+        <div className="corridor-chip">
+          <span className="corridor-chip-name" title={corridor.name}>
+            已选：{corridor.name}
+          </span>
+          <button type="button" onClick={onShowCorridor}>
+            运行图
+          </button>
+          <button type="button" className="corridor-chip-close" onClick={onClearCorridor} aria-label="清除线路选择">
+            ×
+          </button>
+        </div>
+      )}
 
       <div className="panel-hint">点击列车查看详情 · 拖动底部时间轴可回放</div>
     </div>
