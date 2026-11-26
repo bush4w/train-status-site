@@ -4,7 +4,7 @@ import { stations, stationsMap } from '../data/stations'
 import { trains } from '../data/trains'
 import { computeTrainPosition } from '../lib/position'
 import { wgs84ToGcj02 } from '../lib/coord'
-import { statusColor } from '../lib/status'
+import { trainTypeInfo } from '../lib/train-type'
 
 // 高德瓦片使用 GCJ-02，所有 WGS-84 坐标先转换再交给 Leaflet
 const gcj = (lat, lng) => wgs84ToGcj02(lat, lng)
@@ -13,12 +13,24 @@ const gcjOf = (s) => {
   return [p.lat, p.lng]
 }
 
+// 双通道编码标记：填充色=车型（车次编排规定），光环=正晚点（晚点橙色脉冲），蓝环=选中
+// 形状语言：动车组=胶囊（流线头），普速=圆角方形（机车轮廓）
 function trainIcon(t, selected) {
+  const info = trainTypeInfo(t.no)
+  const w = Math.max(26, 13 + String(t.no).length * 7)
+  const cls = [
+    'train-pill',
+    `shape-${info.shape}`,
+    t.delay > 0 ? 'delayed' : 'ontime',
+    selected ? 'selected' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
   return L.divIcon({
     className: '',
-    html: `<div class="train-marker${selected ? ' selected' : ''}" style="background:${statusColor(t.delay)}">${t.no}</div>`,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
+    html: `<div class="${cls}" style="--tc:${info.color}">${t.no}</div>`,
+    iconSize: [w, 20],
+    iconAnchor: [w / 2, 10],
   })
 }
 

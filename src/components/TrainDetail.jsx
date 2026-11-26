@@ -1,25 +1,28 @@
 import { computeTrainPosition } from '../lib/position'
 import { stationsMap } from '../data/stations'
 import { statusColor, STATUS_TEXT } from '../lib/status'
+import { trainTypeInfo } from '../lib/train-type'
 
 // F3 车次详情：点击列车后展示车次、当前区间、正晚点与全程时刻表
 // 时刻表高亮当前所在站（运行中时同时标记前方站）
 export default function TrainDetail({ train, simMinutes, onClose }) {
   const pos = computeTrainPosition(train, stationsMap, simMinutes)
   const color = statusColor(pos.delay)
+  const type = trainTypeInfo(train.no)
   const first = stationsMap[train.stops[0].code]
   const last = stationsMap[train.stops[train.stops.length - 1].code]
 
   return (
     <div className="detail">
       <div className="detail-head">
-        <span className="detail-no" style={{ background: color }}>
+        <span className="detail-no" style={{ background: type.color }}>
           {train.no}
         </span>
         <span className="detail-route">
           {first.name} → {last.name}
+          <span className="detail-type">{type.label}</span>
         </span>
-        <button type="button" className="detail-close" onClick={onClose} aria-label="关闭">
+        <button type="button" className="detail-close btn-icon" onClick={onClose} aria-label="关闭">
           ×
         </button>
       </div>
