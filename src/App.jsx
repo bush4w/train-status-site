@@ -85,6 +85,9 @@ export default function App() {
           {meta.line} {stations.length} 站 · 电报码来自 12306
         </div>
         <div className="item muted">时刻表：{meta.sources.timetable}</div>
+        <div className="item muted">
+          正晚点：{meta.delayAsOf ? `实测于 ${meta.delayAsOf}` : meta.sources.delay}
+        </div>
         <div className="item muted">非官方实时数据，仅供参考</div>
       </div>
     </div>

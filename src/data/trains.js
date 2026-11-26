@@ -4,7 +4,7 @@
 export const trains = [
   {
     "no": "G1",
-    "delay": 0,
+    "delay": 1,
     "stops": [
       {
         "code": "VNP",
@@ -76,7 +76,7 @@ export const trains = [
   },
   {
     "no": "G9",
-    "delay": 15,
+    "delay": 0,
     "stops": [
       {
         "code": "VNP",

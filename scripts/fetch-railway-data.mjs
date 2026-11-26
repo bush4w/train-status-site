@@ -21,6 +21,7 @@ import {
   parseTrainStops,
   parseTrainNameList,
   matchTrainByName,
+  parseDelayMessage,
 } from './lib/otn-parser.mjs'
 import { JINGHU_STATIONS, JINGHU_TRAINS, DATA_SOURCES } from './data/jinghu-line.mjs'
 
@@ -79,7 +80,7 @@ function mergeTelecodes(allStations) {
 // 目标车次：2026 运行图实际开行、终到上海虹桥的京沪标杆车
 // （G101/G103 已停运；G3/G5 终到上海站——既有线站，不在高铁本线表，实测确认）
 const REAL_TARGETS = ['G1', 'G7', 'G9', 'G11', 'G13']
-// 演示晚点值（真实正晚点 Web 端受阻，见 PRD §5 zwdch 条目；meta.js 已披露）
+// 兜底晚点值：仅当真实正晚点抓取失败/离线时使用（meta.js 披露来源）
 const DEMO_DELAY = { G9: 15 }
 
 // ---------- 步骤 3a：queryTrainInfo 免 cookie 链（主路径，2026-11-26 实测打通） ----------
@@ -250,6 +251,99 @@ async function fetchTimetables12306(stations, cookie, date) {
   return trains
 }
 
+// ---------- 步骤 3c：真实正晚点（zwdch/query，2026-11-26 实测打通） ----------
+// 成功配方（用户提供浏览器成功样本 + 复现验证 4/4）：
+//   cxlx=1；不带 randCode；Content-Type 含 charset=UTF-8；
+//   cookie 含 _jc_save_zwdch_fromStation(%uXXXX 格式) 与 _jc_save_zwdch_cxlx=1；
+//   cz 必须是"想查的站"：未发车→始发站（图定）；在途→前方站（预计）或已过站（实际）
+// 晚点分钟 = 返回时刻 − 图定时刻（早于图定按正点计，钳为 0）
+const UA_EDGE =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36 Edg/158.0.0.0'
+
+// JS escape() 风格 %uXXXX 编码（_jc_save cookie 用）
+const escapeU = (s) => [...s].map((c) => '%u' + c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')).join('')
+// czEn：encodeURIComponent 后 % → -
+const czEn = (s) => encodeURIComponent(s).replace(/%/g, '-')
+
+// 选择查询站：在途→最近未发站（预计）；未发车→始发站；已终到→终到站（实际到达）
+function pickDelayQueryStop(train, nowMin) {
+  const stops = train.stops
+  if (toMin(stops[0].dep) > nowMin) return { stop: stops[0], sched: toMin(stops[0].dep) }
+  for (const s of stops) {
+    if (s.dep != null && toMin(s.dep) > nowMin) return { stop: s, sched: toMin(s.dep) }
+  }
+  const last = stops[stops.length - 1]
+  return { stop: last, sched: toMin(last.arr) }
+}
+
+async function establishZwdSession() {
+  // GET zwdch/init（302 → view/onTimeOrLate.html），手动跟随以收集全部 Set-Cookie
+  const pairs = []
+  let url = 'https://kyfw.12306.cn/otn/zwdch/init'
+  for (let hop = 0; hop < 3; hop++) {
+    const res = await fetch(url, { headers: { 'User-Agent': UA_EDGE, Cookie: pairs.join('; ') }, redirect: 'manual' })
+    for (const c of res.headers.getSetCookie?.() ?? []) pairs.push(c.split(';')[0])
+    const loc = res.headers.get('location')
+    if (res.status >= 300 && res.status < 400 && loc) {
+      url = new URL(loc, url).href
+      await sleep(500)
+      continue
+    }
+    break
+  }
+  if (!pairs.some((p) => p.startsWith('JSESSIONID='))) throw new Error('zwdch 会话建立失败（无 JSESSIONID）')
+  return pairs.join('; ')
+}
+
+async function fetchRealDelays(trains, stations) {
+  const byCode = Object.fromEntries(stations.map((s) => [s.code, s]))
+  const jar = await establishZwdSession()
+  const now = new Date()
+  const nowMin = now.getHours() * 60 + now.getMinutes()
+  let realCount = 0
+
+  for (const t of trains) {
+    await politeDelay()
+    const { stop, sched } = pickDelayQueryStop(t, nowMin)
+    const st = byCode[stop.code]
+    const cookie = `${jar}; _jc_save_zwdch_fromStation=${escapeU(st.name)}%2C${stop.code}; _jc_save_zwdch_cxlx=1`
+    const body = `cxlx=1&cz=${encodeURIComponent(st.name)}&cc=${t.no}&czEn=${czEn(st.name)}`
+    const res = await fetch('https://kyfw.12306.cn/otn/zwdch/query', {
+      method: 'POST',
+      headers: {
+        'User-Agent': UA_EDGE,
+        Cookie: cookie,
+        Accept: '*/*',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Cache-Control': 'no-cache',
+        'If-Modified-Since': '0',
+        Origin: 'https://kyfw.12306.cn',
+        Referer: 'https://kyfw.12306.cn/otn/view/onTimeOrLate.html',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body,
+    })
+    const json = await res.json().catch(() => null)
+    const parsed = parseDelayMessage(json)
+    if (!parsed) {
+      console.warn(`⚠ ${t.no}@${st.name}: 正晚点响应不可解析（${json?.data?.message ?? '无消息'}），保留原 delay`)
+      continue
+    }
+    const realMin = Number(parsed.time.slice(0, 2)) * 60 + Number(parsed.time.slice(3, 5))
+    t.delay = Math.max(0, realMin - sched) // 早于图定按正点计
+    realCount++
+    const schedStr = `${String(Math.floor(sched / 60)).padStart(2, '0')}:${String(sched % 60).padStart(2, '0')}`
+    console.log(
+      `✓ 正晚点：${t.no}@${st.name} ${parsed.predicted ? '预计' : '实际'} ${parsed.time} / 图定 ${schedStr} → 晚点 ${t.delay} 分`,
+    )
+  }
+  if (!realCount) throw new Error('所有车次正晚点均不可解析')
+  const pad = (n) => String(n).padStart(2, '0')
+  const localStamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+  return `${localStamp}（${realCount}/${trains.length} 车次实测）`
+}
+
 // ---------- 步骤 4：整理时刻表 → 电报码 ----------
 function curatedTimetables(stations) {
   const byName = indexByName(stations)
@@ -349,10 +443,23 @@ async function main() {
   validate(stations, trains)
   console.log('✓ 数据校验通过（电报码/坐标/时刻单调性）')
 
+  // 真实正晚点（zwdch 实测，2026-11-26 打通）；离线或 --no-delay 跳过
+  let delaySource = DATA_SOURCES.delay
+  let delayAsOf = null
+  if (!args.offline && !args['no-delay']) {
+    try {
+      delayAsOf = await fetchRealDelays(trains, stations)
+      delaySource = '12306 正晚点实测（zwdch）'
+    } catch (e) {
+      console.warn(`⚠ 真实正晚点抓取失败：${e.message}（保留兜底 delay 值，meta 已披露）`)
+    }
+  }
+
   emit(stations, trains, {
     generatedAt: new Date().toISOString().slice(0, 10),
     line: '京沪高铁',
-    sources: { ...DATA_SOURCES, timetable: timetableSource },
+    sources: { ...DATA_SOURCES, timetable: timetableSource, delay: delaySource },
+    delayAsOf,
     disclaimer: '非官方实时数据，仅供参考；时刻以 12306 为准，不得作为行程决策依据',
   })
 }

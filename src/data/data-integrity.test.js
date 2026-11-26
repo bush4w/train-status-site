@@ -67,7 +67,17 @@ describe('M2 生成数据完整性', () => {
   it('meta 含数据来源与合规声明', () => {
     expect(meta.sources.telecode).toContain('12306')
     expect(meta.sources.timetable).toBeTruthy()
+    expect(meta.sources.delay).toBeTruthy()
     expect(meta.disclaimer).toContain('非官方')
     expect(meta.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    // delayAsOf：在线模式为实测时间戳字符串，离线为 null
+    expect(meta.delayAsOf === null || typeof meta.delayAsOf === 'string').toBe(true)
+  })
+
+  it('晚点值非负整数（早于图定钳为 0）', () => {
+    for (const t of trains) {
+      expect(Number.isInteger(t.delay)).toBe(true)
+      expect(t.delay).toBeGreaterThanOrEqual(0)
+    }
   })
 })

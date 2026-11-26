@@ -64,6 +64,27 @@ export function matchTrainByName(list, code, start, end) {
 }
 
 /**
+ * 解析 zwdch/query（正晚点查询）响应消息 → 实际/预计时刻
+ * 实测（2026-11-26，用户提供浏览器成功样本 + 复现验证）成功配方：
+ *   POST cxlx=1 & cz=查询站名 & cc=车次 & czEn=encodeURI(站名).replace(/%/g,'-')
+ *   ——不带 randCode 参数；Content-Type 须含 charset=UTF-8；
+ *   cookie 带 _jc_save_zwdch_fromStation/_jc_save_zwdch_cxlx（页面 JS 提交前写入）
+ * 消息格式：
+ *   "G9次列车，北京南站出发时间为10:00"        → 实际出发（已过站/正点）
+ *   "预计G1次列车，苏州北站出发时间为11:02"    → 预计出发（前方站）
+ * 晚点分钟 = 返回时刻 − 图定时刻（由调用方比对时刻表得出）
+ * @param {object} json zwdch/query 响应
+ * @returns {{predicted:boolean, train:string, station:string, time:string}|null}
+ */
+export function parseDelayMessage(json) {
+  const msg = json?.data?.message
+  if (typeof msg !== 'string') return null
+  const m = msg.match(/^(预计)?(.+?)次列车，(.+?)站出发时间为(\d{2}:\d{2})$/)
+  if (!m) return null
+  return { predicted: Boolean(m[1]), train: m[2], station: m[3], time: m[4] }
+}
+
+/**
  * 解析 czxx/queryByTrainNo 或 queryTrainInfo/query 响应 → 经停站数组
  * 两接口响应结构同构（2026-11-25/26 真实响应校准）：
  *   { data: { data: [{ station_name, station_train_code, arrive_time, start_time, station_no }] } }
