@@ -5,7 +5,24 @@ import {
   parseTrainStops,
   parseTrainNameList,
   matchTrainByName,
+  parseDelayMessage,
 } from './otn-parser.mjs'
+
+describe('parseDelayMessage（zwdch 正晚点，2026-11-26 实测样本）', () => {
+  it('解析实际出发（无"预计"前缀）', () => {
+    const json = { data: { result: 'Y', flag: false, message: 'G9次列车，北京南站出发时间为10:00' } }
+    expect(parseDelayMessage(json)).toEqual({ predicted: false, train: 'G9', station: '北京南', time: '10:00' })
+  })
+  it('解析预计出发（前方站）', () => {
+    const json = { data: { message: '预计G1次列车，苏州北站出发时间为11:02' } }
+    expect(parseDelayMessage(json)).toEqual({ predicted: true, train: 'G1', station: '苏州北', time: '11:02' })
+  })
+  it('非时刻类消息返回 null（如查询失败/尚未开行提示）', () => {
+    expect(parseDelayMessage({ data: { message: '查询失败！' } })).toBeNull()
+    expect(parseDelayMessage({ data: { flag: true, data: '<html>...</html>' } })).toBeNull()
+    expect(parseDelayMessage(null)).toBeNull()
+  })
+})
 
 // getTrainName fixture：2026-11-26 真实响应格式（明文，全国 1.4 万+ 条）
 const NAME_LIST_FIXTURE = {
