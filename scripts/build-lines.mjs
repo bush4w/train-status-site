@@ -11,7 +11,7 @@
 //
 // 数据归属：© OpenStreetMap contributors — ODbL（前端与 meta 必须署名）
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs'
 import { parseStationNameJs } from './lib/station-parser.mjs'
 import { geocodeStations } from './lib/geocode.mjs'
 import { JINGHU_STATIONS } from './data/jinghu-line.mjs'
@@ -105,7 +105,7 @@ function buildStationCoords() {
   for (const s of geocoded) {
     const m = matchStation(s.name, s.lat, s.lng, osmIndex)
     if (m) {
-      coords[s.name] = { lat: +m.lat.toFixed(6), lng: +m.lon.toFixed(6) }
+      coords[s.name] = { lat: +m.lat.toFixed(5), lng: +m.lon.toFixed(5) } // 5 位小数≈1m，省体积
       matched++
     }
   }
@@ -134,12 +134,12 @@ function main() {
     hsr,
     conv,
   }
-  const header = `// 由 scripts/build-lines.mjs 生成（${lines.generatedAt}）——请勿手改\n// 数据 ${lines.attribution}（https://www.openstreetmap.org/copyright）\n`
-  const js = header + `export const railLines = ${JSON.stringify(lines)}\n`
-  writeFileSync('src/data/lines.js', js)
-  const mb = statSync('src/data/lines.js').size / 1048576
-  console.log(`✓ 已生成 src/data/lines.js（${mb.toFixed(2)}MB，高铁 ${hsr.length} 条 / 普速 ${conv.length} 条）`)
-  if (mb > 4) console.warn('⚠ 文件超 4MB，建议加大容差（--hsr-tol/--conv-tol）或改为 public/ 运行时加载')
+  // 线位几何体积大（数 MB），走 public/data/lines.json 运行时加载，不进主包
+  mkdirSync('public/data', { recursive: true })
+  writeFileSync('public/data/lines.json', JSON.stringify(lines))
+  const mb = statSync('public/data/lines.json').size / 1048576
+  console.log(`✓ 已生成 public/data/lines.json（${mb.toFixed(2)}MB，高铁 ${hsr.length} 条 / 普速 ${conv.length} 条）`)
+  if (mb > 4) console.warn('⚠ 文件超 4MB，建议加大容差（--hsr-tol/--conv-tol）')
 }
 
 main()
