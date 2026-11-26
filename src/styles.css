@@ -1,3 +1,28 @@
+/* ============================================================
+   全国列车运行状态 · 设计系统
+   令牌（tokens）→ 布局 → 组件 → 地图标记 → Leaflet 覆写
+   ============================================================ */
+
+/* ---------- 设计令牌 ---------- */
+:root {
+  --primary: #4a6fa5;
+  --primary-soft: #e8eef7;
+  --on-time: #27ae60;
+  --delay: #e67e22;
+  --panel-bg: rgba(255, 255, 255, 0.96);
+  --panel-radius: 10px;
+  --panel-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  --text-main: #444;
+  --text-sub: #999;
+  --text-label: #888;
+  --border: #ddd;
+  --hover-bg: #f0f3f8;
+  --font-xs: 11px;
+  --font-sm: 12px;
+  --font-md: 13px;
+  --radius-sm: 6px;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -13,6 +38,11 @@ body,
 body {
   font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
     sans-serif;
+  color: var(--text-main);
+}
+
+button {
+  font-family: inherit;
 }
 
 .app {
@@ -25,20 +55,26 @@ body {
   inset: 0;
 }
 
-/* 控制面板 */
-.panel {
+/* ---------- 通用浮层面板 ---------- */
+.panel,
+.legend,
+.detail {
   position: absolute;
+  z-index: 1000;
+  background: var(--panel-bg);
+  border-radius: var(--panel-radius);
+  box-shadow: var(--panel-shadow);
+}
+
+/* ---------- 控制面板（左上） ---------- */
+.panel {
   top: 12px;
   left: 12px;
-  z-index: 1000;
-  background: rgba(255, 255, 255, 0.96);
-  border-radius: 10px;
   padding: 12px 14px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-width: 220px;
+  min-width: 232px;
 }
 
 .panel-time,
@@ -49,8 +85,8 @@ body {
 }
 
 .label {
-  font-size: 12px;
-  color: #888;
+  font-size: var(--font-sm);
+  color: var(--text-label);
   min-width: 48px;
 }
 
@@ -67,23 +103,27 @@ body {
 
 .speed-btns button {
   padding: 4px 8px;
-  font-size: 12px;
-  border: 1px solid #ddd;
+  font-size: var(--font-sm);
+  border: 1px solid var(--border);
   background: #fff;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .speed-btns button:hover {
-  border-color: #4a6fa5;
-  color: #4a6fa5;
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.speed-btns button:active {
+  transform: scale(0.95);
 }
 
 .speed-btns button.active {
-  background: #4a6fa5;
+  background: var(--primary);
   color: #fff;
-  border-color: #4a6fa5;
+  border-color: var(--primary);
 }
 
 .panel-actions {
@@ -94,235 +134,30 @@ body {
 .panel-actions button {
   flex: 1;
   padding: 6px 10px;
-  font-size: 13px;
-  border: 1px solid #ddd;
+  font-size: var(--font-md);
+  border: 1px solid var(--border);
   background: #f7f7f7;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
+  transition: all 0.15s;
 }
 
 .panel-actions button:hover {
   background: #eee;
+  border-color: #ccc;
+}
+
+.panel-actions button:active {
+  transform: scale(0.97);
 }
 
 .panel-hint {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: #aaa;
   text-align: center;
 }
 
-/* 列车标记 */
-.train-marker {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: 2px solid #fff;
-  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.train-marker.selected {
-  box-shadow:
-    0 0 0 3px rgba(74, 111, 165, 0.65),
-    0 1px 5px rgba(0, 0, 0, 0.45);
-  transform: scale(1.12);
-}
-
-/* 图例 */
-.legend {
-  position: absolute;
-  bottom: 24px;
-  right: 16px;
-  z-index: 1000;
-  background: rgba(255, 255, 255, 0.96);
-  border-radius: 8px;
-  padding: 10px 12px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-  font-size: 12px;
-  color: #555;
-}
-
-.legend .item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 4px 0;
-}
-
-.legend .dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  display: inline-block;
-  flex: none;
-}
-
-.legend .muted {
-  color: #999;
-  margin-top: 6px;
-}
-
-.legend .clickable {
-  cursor: pointer;
-  border-radius: 4px;
-  padding: 1px 4px;
-  margin-left: -4px;
-}
-
-.legend .clickable:hover {
-  background: #f0f3f8;
-}
-
-.legend .clickable.active {
-  background: #e8eef7;
-  font-weight: 600;
-}
-
-.legend .legend-status {
-  gap: 5px;
-  padding-bottom: 6px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid #eee;
-  color: #777;
-}
-
-/* 车次详情面板（F3） */
-.detail {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 1000;
-  width: 280px;
-  max-height: calc(100% - 120px);
-  overflow-y: auto;
-  background: rgba(255, 255, 255, 0.97);
-  border-radius: 10px;
-  padding: 12px 14px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-  font-size: 13px;
-  color: #444;
-}
-
-.detail-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.detail-no {
-  color: #fff;
-  font-weight: 700;
-  font-size: 13px;
-  padding: 2px 8px;
-  border-radius: 6px;
-}
-
-.detail-route {
-  flex: 1;
-  font-size: 12px;
-  color: #666;
-}
-
-.detail-close {
-  border: none;
-  background: none;
-  font-size: 18px;
-  line-height: 1;
-  color: #999;
-  cursor: pointer;
-  padding: 2px 4px;
-}
-
-.detail-close:hover {
-  color: #333;
-}
-
-.detail-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 10px 0 6px;
-}
-
-.badge {
-  color: #fff;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-
-.ontime-text {
-  color: #27ae60;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.delay-text {
-  color: #e67e22;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.detail-current {
-  margin-bottom: 10px;
-  line-height: 1.5;
-}
-
-.detail-current .muted {
-  color: #999;
-  font-size: 12px;
-}
-
-.detail-timetable {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.detail-timetable th {
-  text-align: left;
-  color: #999;
-  font-weight: 500;
-  padding: 3px 6px;
-  border-bottom: 1px solid #eee;
-}
-
-.detail-timetable td {
-  padding: 4px 6px;
-  border-bottom: 1px solid #f5f5f5;
-}
-
-.detail-timetable tr.current td {
-  background: #e8eef7;
-  font-weight: 600;
-}
-
-.detail-timetable tr.next td {
-  background: #f4f7fb;
-}
-
-.detail-timetable .here {
-  color: #4a6fa5;
-  font-size: 10px;
-  margin-left: 4px;
-}
-
-.detail-note {
-  margin-top: 10px;
-  font-size: 11px;
-  color: #aaa;
-  text-align: center;
-}
-
-/* F5 搜索框 */
+/* ---------- F5 搜索框 ---------- */
 .search {
   position: relative;
 }
@@ -330,15 +165,16 @@ body {
 .search-input {
   width: 100%;
   padding: 6px 26px 6px 10px;
-  font-size: 12px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
+  font-size: var(--font-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .search-input:focus {
-  border-color: #4a6fa5;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(74, 111, 165, 0.15);
 }
 
 .search-clear {
@@ -351,6 +187,13 @@ body {
   color: #aaa;
   cursor: pointer;
   padding: 2px 4px;
+  line-height: 1;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.search-clear:hover {
+  color: #333;
 }
 
 .search-results {
@@ -372,12 +215,13 @@ body {
   align-items: center;
   gap: 7px;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--font-sm);
   cursor: pointer;
+  transition: background 0.1s;
 }
 
 .search-item:hover {
-  background: #f0f3f8;
+  background: var(--hover-bg);
 }
 
 .search-item-main {
@@ -386,24 +230,306 @@ body {
 }
 
 .search-item-sub {
-  color: #999;
-  font-size: 11px;
+  color: var(--text-sub);
+  font-size: var(--font-xs);
   margin-left: auto;
   white-space: nowrap;
 }
 
 .search-empty {
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--font-sm);
   color: #aaa;
   text-align: center;
+}
+
+.search .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
 }
 
 .search .dot.station {
   background: #333;
 }
 
-/* F6 时间轴 */
+/* ---------- 图例（右下，可折叠） ---------- */
+.legend {
+  bottom: 24px;
+  right: 16px;
+  padding: 10px 12px;
+  font-size: var(--font-sm);
+  color: #555;
+  width: 224px;
+}
+
+.legend-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: #555;
+  padding: 0;
+}
+
+.legend-head:hover {
+  color: var(--primary);
+}
+
+.legend-toggle {
+  font-size: 15px;
+  color: var(--text-sub);
+  line-height: 1;
+}
+
+.legend-body {
+  max-height: 44vh;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+
+.legend .item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.legend .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+}
+
+.legend .muted {
+  color: var(--text-sub);
+  margin-top: 4px;
+  font-size: var(--font-xs);
+  line-height: 1.5;
+}
+
+.legend .clickable {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin-left: -4px;
+  transition: background 0.1s;
+}
+
+.legend .clickable:hover {
+  background: var(--hover-bg);
+}
+
+.legend .clickable.active {
+  background: var(--primary-soft);
+  font-weight: 600;
+}
+
+.legend .legend-status {
+  gap: 5px;
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid #eee;
+  color: #777;
+}
+
+/* 车型色谱（车次编排规定） */
+.type-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 8px;
+  margin-bottom: 8px;
+}
+
+.type-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #666;
+  white-space: nowrap;
+}
+
+.chip-shape {
+  width: 13px;
+  height: 8px;
+  background: var(--tc);
+  display: inline-block;
+  flex: none;
+}
+
+.chip-shape.shape-emu {
+  border-radius: 4px;
+}
+
+.chip-shape.shape-loco {
+  border-radius: 2px;
+}
+
+/* 正晚点光环示意 */
+.ring-demo {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #777;
+  display: inline-block;
+  flex: none;
+}
+
+.ring-demo.ontime {
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #bbb;
+}
+
+.ring-demo.delayed {
+  border: 2px solid var(--delay);
+  box-shadow: 0 0 0 1px rgba(230, 126, 34, 0.35);
+}
+
+/* ---------- 车次详情面板（右上，F3） ---------- */
+.detail {
+  top: 12px;
+  right: 12px;
+  width: 280px;
+  max-height: calc(100% - 120px);
+  overflow-y: auto;
+  padding: 12px 14px;
+  font-size: var(--font-md);
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-no {
+  color: #fff;
+  font-weight: 700;
+  font-size: var(--font-md);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.detail-route {
+  flex: 1;
+  font-size: var(--font-sm);
+  color: #666;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.detail-type {
+  font-size: 10px;
+  color: var(--text-sub);
+}
+
+.btn-icon {
+  border: none;
+  background: none;
+  font-size: 18px;
+  line-height: 1;
+  color: #999;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.btn-icon:hover {
+  color: #333;
+  background: var(--hover-bg);
+}
+
+.detail-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 6px;
+}
+
+.badge {
+  color: #fff;
+  font-size: var(--font-xs);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.ontime-text {
+  color: var(--on-time);
+  font-size: var(--font-sm);
+  font-weight: 600;
+}
+
+.delay-text {
+  color: var(--delay);
+  font-size: var(--font-sm);
+  font-weight: 600;
+}
+
+.detail-current {
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.detail-current .muted {
+  color: var(--text-sub);
+  font-size: var(--font-sm);
+}
+
+.detail-timetable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-timetable th {
+  text-align: left;
+  color: var(--text-sub);
+  font-weight: 500;
+  padding: 3px 6px;
+  border-bottom: 1px solid #eee;
+}
+
+.detail-timetable td {
+  padding: 4px 6px;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.detail-timetable tr.current td {
+  background: var(--primary-soft);
+  font-weight: 600;
+}
+
+.detail-timetable tr.next td {
+  background: #f4f7fb;
+}
+
+.detail-timetable .here {
+  color: var(--primary);
+  font-size: 10px;
+  margin-left: 4px;
+}
+
+.detail-note {
+  margin-top: 10px;
+  font-size: var(--font-xs);
+  color: #aaa;
+  text-align: center;
+}
+
+/* ---------- F6 时间轴（底部居中） ---------- */
 .timeline {
   position: absolute;
   bottom: 20px;
@@ -412,25 +538,25 @@ body {
   z-index: 1000;
   width: min(56vw, 560px);
   background: rgba(255, 255, 255, 0.94);
-  border-radius: 10px;
+  border-radius: var(--panel-radius);
   padding: 8px 16px 4px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--panel-shadow);
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
 .timeline-now {
-  font-size: 13px;
+  font-size: var(--font-md);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: #4a6fa5;
+  color: var(--primary);
 }
 
 .timeline-slider {
   width: 100%;
   margin: 2px 0 0;
-  accent-color: #4a6fa5;
+  accent-color: var(--primary);
   cursor: pointer;
 }
 
@@ -442,4 +568,60 @@ body {
   color: #aaa;
   font-variant-numeric: tabular-nums;
   padding: 0 2px;
+}
+
+/* ---------- 列车标记（车型胶囊 + 状态光环） ---------- */
+.train-pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  padding: 0 6px;
+  background: var(--tc);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 1.5px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+/* 形状语言：动车组=胶囊（流线头），普速=圆角方形（机车轮廓） */
+.train-pill.shape-emu {
+  border-radius: 10px;
+}
+
+.train-pill.shape-loco {
+  border-radius: 5px;
+}
+
+/* 晚点：橙色描边 + 呼吸脉冲 */
+.train-pill.delayed {
+  border-color: var(--delay);
+  animation: delay-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes delay-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(230, 126, 34, 0.55), 0 1px 4px rgba(0, 0, 0, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(230, 126, 34, 0), 0 1px 4px rgba(0, 0, 0, 0.45);
+  }
+}
+
+/* 选中：主题蓝外环 + 放大 */
+.train-pill.selected {
+  outline: 2.5px solid var(--primary);
+  outline-offset: 1px;
+  transform: scale(1.12);
+}
+
+/* ---------- Leaflet 覆写 ---------- */
+.leaflet-tooltip {
+  font-size: var(--font-sm);
+  line-height: 1.5;
 }

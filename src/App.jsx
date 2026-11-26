@@ -9,6 +9,7 @@ import { stations, stationsMap } from './data/stations'
 import { meta } from './data/meta'
 import { statusColor, ON_TIME_COLOR, DELAY_COLOR } from './lib/status'
 import { computeTrainPosition } from './lib/position'
+import { TRAIN_TYPES } from './lib/train-type'
 
 export default function App() {
   // 模拟时钟默认对齐真实当前时间：列车位置与正晚点快照同日同刻，消除班次错位
@@ -18,6 +19,7 @@ export default function App() {
   const [selectedNo, setSelectedNo] = useState(null)
   const [scrubbing, setScrubbing] = useState(false)
   const [flyTarget, setFlyTarget] = useState(null)
+  const [legendOpen, setLegendOpen] = useState(true)
 
   // 模拟时钟：每 100ms 推进 speed 倍（拖动时间轴时暂停推进）
   useEffect(() => {
@@ -93,33 +95,54 @@ export default function App() {
           onClose={() => setSelectedNo(null)}
         />
       )}
-      <div className="legend">
-        <div className="item legend-status">
-          <span className="dot" style={{ background: ON_TIME_COLOR }} />
-          <span>正点</span>
-          <span className="dot" style={{ background: DELAY_COLOR }} />
-          <span>晚点</span>
-        </div>
-        <div className="item muted">
-          在图车次 {trains.length} · 车站 {meta.counts?.stations ?? stations.length}
-        </div>
-        {lateTop.length === 0 && <div className="item muted">抽样车次当前均正点</div>}
-        {lateTop.map((t) => (
-          <div
-            className={`item clickable${t.no === selectedNo ? ' active' : ''}`}
-            key={t.no}
-            onClick={() => setSelectedNo(t.no === selectedNo ? null : t.no)}
-          >
-            <span className="dot" style={{ background: statusColor(t.delay) }} />
-            <span>
-              {t.no}（晚点 {t.delay} 分）
-            </span>
+      <div className={`legend${legendOpen ? '' : ' collapsed'}`}>
+        <button
+          type="button"
+          className="legend-head"
+          onClick={() => setLegendOpen((o) => !o)}
+          aria-expanded={legendOpen}
+        >
+          <span>图例</span>
+          <span className="legend-toggle">{legendOpen ? '−' : '+'}</span>
+        </button>
+        {legendOpen && (
+          <div className="legend-body">
+            <div className="type-grid">
+              {TRAIN_TYPES.map((t) => (
+                <span className="type-chip" key={t.letter} title={t.label}>
+                  <i className={`chip-shape shape-${t.shape}`} style={{ '--tc': t.color }} />
+                  {t.letter}·{t.label}
+                </span>
+              ))}
+            </div>
+            <div className="item legend-status">
+              <span className="ring-demo ontime" />
+              <span>正点</span>
+              <span className="ring-demo delayed" />
+              <span>晚点</span>
+            </div>
+            <div className="item muted">
+              在图车次 {trains.length} · 车站 {meta.counts?.stations ?? stations.length}
+            </div>
+            {lateTop.length === 0 && <div className="item muted">抽样车次当前均正点</div>}
+            {lateTop.map((t) => (
+              <div
+                className={`item clickable${t.no === selectedNo ? ' active' : ''}`}
+                key={t.no}
+                onClick={() => setSelectedNo(t.no === selectedNo ? null : t.no)}
+              >
+                <span className="dot" style={{ background: statusColor(t.delay) }} />
+                <span>
+                  {t.no}（晚点 {t.delay} 分）
+                </span>
+              </div>
+            ))}
+            <div className="item muted">
+              正晚点：{meta.delayAsOf ? `抽样实测于 ${meta.delayAsOf}` : meta.sources.delay}
+            </div>
+            <div className="item muted">数据 {meta.generatedAt} · 非官方实时，仅供参考</div>
           </div>
-        ))}
-        <div className="item muted">
-          正晚点：{meta.delayAsOf ? `抽样实测于 ${meta.delayAsOf}` : meta.sources.delay}
-        </div>
-        <div className="item muted">数据 {meta.generatedAt} · 非官方实时，仅供参考</div>
+        )}
       </div>
     </div>
   )
