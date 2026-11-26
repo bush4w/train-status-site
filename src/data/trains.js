@@ -1,4 +1,4 @@
-// 由 scripts/fetch-railway-data.mjs 生成（2026-11-25）——请勿手改，重跑脚本更新
+// 由 scripts/fetch-railway-data.mjs 生成（2026-11-26）——请勿手改，重跑脚本更新
 // 京沪线代表性车次（时刻表来源见 meta.js；delay 为演示值，M3 接入真实正晚点）
 
 export const trains = [

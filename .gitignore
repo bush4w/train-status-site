@@ -17,3 +17,6 @@ build/
 
 # 日志
 *.log
+
+# 逆向分析工作区（scope/findings，内部管理产物）
+work/
