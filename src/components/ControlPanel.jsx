@@ -29,7 +29,7 @@ export default function ControlPanel({ time, speed, playing, onSpeed, onToggle, 
           {playing ? '⏸ 暂停' : '▶ 播放'}
         </button>
         <button type="button" onClick={onReset}>
-          ↺ 重置
+          ↺ 回到现在
         </button>
       </div>
 
