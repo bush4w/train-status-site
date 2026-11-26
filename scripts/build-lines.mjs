@@ -105,6 +105,10 @@ function main() {
   if (!existsSync(OSM_DIR)) throw new Error('缺少 .cache/osm/，请先运行 node scripts/fetch-osm-geom.mjs')
 
   buildStationCoords()
+  if (args['stations-only']) {
+    console.log('✓ --stations-only：仅更新站点坐标，跳过线路构建')
+    return
+  }
 
   const hsr = buildLines('hsr_', HSR_TOL, '高铁线路')
   const conv = buildLines('conv_', CONV_TOL, '普速干线')
