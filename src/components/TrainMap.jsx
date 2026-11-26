@@ -5,6 +5,13 @@ import { railLines } from '../data/lines'
 import { computeTrainPosition } from '../lib/position'
 import { wgs84ToGcj02 } from '../lib/coord'
 import { trainTypeInfo } from '../lib/train-type'
+import { CORRIDORS, resolveCorridor } from '../lib/diagram'
+
+// 走廊（线路）静态解析：站名 → 坐标序列（数据不变，模块级算一次）
+const stationsByName = Object.fromEntries(stations.map((s) => [s.name, s]))
+const CORRIDOR_PATHS = CORRIDORS.map((c) => resolveCorridor(c, stationsByName)).filter(
+  (c) => c.stations.length >= 3,
+)
 
 // 高德瓦片使用 GCJ-02，所有 WGS-84 坐标先转换再交给 Leaflet
 const gcj = (lat, lng) => wgs84ToGcj02(lat, lng)
@@ -47,10 +54,11 @@ function tooltipHtml(t, simMinutes) {
   )
 }
 
-export default function TrainMap({ trains, simMinutes, selectedNo, onSelect, flyTarget }) {
+export default function TrainMap({ trains, simMinutes, selectedNo, onSelect, flyTarget, selectedCorridor, onPickCorridor }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef({})
+  const corridorLinesRef = useRef({})
   // 每帧/每次轮询变化的量用 ref 透传，地图仅初始化一次
   const simRef = useRef(simMinutes)
   simRef.current = simMinutes
@@ -58,6 +66,10 @@ export default function TrainMap({ trains, simMinutes, selectedNo, onSelect, fly
   onSelectRef.current = onSelect
   const trainsRef = useRef(trains)
   trainsRef.current = trains
+  const selectedCorridorRef = useRef(selectedCorridor)
+  selectedCorridorRef.current = selectedCorridor
+  const onPickCorridorRef = useRef(onPickCorridor)
+  onPickCorridorRef.current = onPickCorridor
 
   useEffect(() => {
     const map = L.map(containerRef.current, {
@@ -116,6 +128,23 @@ export default function TrainMap({ trains, simMinutes, selectedNo, onSelect, fly
     map.on('zoomend', syncCityLayer)
     syncCityLayer()
 
+    // 线路走廊：不可见粗命中线（点击→运行图）+ 悬停/选中高亮线
+    for (const c of CORRIDOR_PATHS) {
+      const pts = c.stations.map((s) => gcjOf(s))
+      const visible = L.polyline(pts, { color: '#e67e22', weight: 3.5, opacity: 0, interactive: false }).addTo(map)
+      L.polyline(pts, { color: '#4a6fa5', weight: 14, opacity: 0, interactive: true })
+        .bindTooltip(`${c.name} · 点击查看运行图`)
+        .on('mouseover', () => {
+          if (selectedCorridorRef.current !== c.id) visible.setStyle({ opacity: 0.45 })
+        })
+        .on('mouseout', () => {
+          if (selectedCorridorRef.current !== c.id) visible.setStyle({ opacity: 0 })
+        })
+        .on('click', () => onPickCorridorRef.current?.(c.id))
+        .addTo(map)
+      corridorLinesRef.current[c.id] = visible
+    }
+
     // 列车 marker：tooltip 函数内容（打开时按最新晚点/时刻实时计算）
     for (const t of trainsRef.current) {
       const m = L.marker([0, 0], { icon: trainIcon(t, false) }).addTo(map)
@@ -147,8 +176,16 @@ export default function TrainMap({ trains, simMinutes, selectedNo, onSelect, fly
       map.remove()
       mapRef.current = null
       markersRef.current = {}
+      corridorLinesRef.current = {}
     }
   }, [])
+
+  // 选中走廊高亮
+  useEffect(() => {
+    for (const [id, line] of Object.entries(corridorLinesRef.current)) {
+      line.setStyle({ opacity: id === selectedCorridor ? 0.9 : 0 })
+    }
+  }, [selectedCorridor])
 
   // 选中态 + 晚点变化 → 重建图标（delaySig 由轮询合并后的晚点驱动）
   const delaySig = trains.map((t) => `${t.no}:${t.delay}`).join(',')

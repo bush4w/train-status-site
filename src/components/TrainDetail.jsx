@@ -5,7 +5,7 @@ import { trainTypeInfo } from '../lib/train-type'
 
 // F3 车次详情：点击列车后展示车次、当前区间、正晚点与全程时刻表
 // 时刻表高亮当前所在站（运行中时同时标记前方站）
-export default function TrainDetail({ train, simMinutes, onClose }) {
+export default function TrainDetail({ train, simMinutes, onClose, onDiagram, diagramName }) {
   const pos = computeTrainPosition(train, stationsMap, simMinutes)
   const color = statusColor(pos.delay)
   const type = trainTypeInfo(train.no)
@@ -44,6 +44,11 @@ export default function TrainDetail({ train, simMinutes, onClose }) {
           <div className="muted">
             预计 {pos.arrTime} 到 {pos.nextStation}
           </div>
+        )}
+        {onDiagram && (
+          <button type="button" className="diagram-btn" onClick={onDiagram}>
+            📈 查看{diagramName}运行图
+          </button>
         )}
       </div>
 

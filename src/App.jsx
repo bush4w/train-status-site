@@ -10,6 +10,14 @@ import { meta } from './data/meta'
 import { statusColor, ON_TIME_COLOR, DELAY_COLOR } from './lib/status'
 import { computeTrainPosition } from './lib/position'
 import { TRAIN_TYPES } from './lib/train-type'
+import TrainDiagram from './components/TrainDiagram'
+import { CORRIDORS, resolveCorridor, corridorOfTrain } from './lib/diagram'
+
+// 走廊静态解析（站名 → 坐标），数据不变只需算一次
+const stationsByName = Object.fromEntries(stations.map((s) => [s.name, s]))
+const ALL_CORRIDORS = CORRIDORS.map((c) => resolveCorridor(c, stationsByName)).filter(
+  (c) => c.stations.length >= 3,
+)
 
 export default function App() {
   // 时钟默认「实时」模式：直接对接系统墙钟（不漂移、不倍速）；
@@ -23,6 +31,8 @@ export default function App() {
   const [flyTarget, setFlyTarget] = useState(null)
   const [legendOpen, setLegendOpen] = useState(true)
   const [liveDelays, setLiveDelays] = useState(null)
+  const [corridorId, setCorridorId] = useState(null)
+  const corridor = ALL_CORRIDORS.find((c) => c.id === corridorId) || null
   const liveModeRef = useRef(liveMode)
   liveModeRef.current = liveMode
 
@@ -94,6 +104,8 @@ export default function App() {
   const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 
   const selectedTrain = effectiveTrains.find((t) => t.no === selectedNo) || null
+  // 选中车次所属走廊（详情面板"查看线路运行图"入口）
+  const selectedTrainCorridor = selectedTrain ? corridorOfTrain(selectedTrain, ALL_CORRIDORS) : null
   // 晚点 Top5（全国模式车次多，图例只列晚点前列）
   const lateTop = [...effectiveTrains]
     .filter((t) => t.delay > 0)
@@ -121,6 +133,8 @@ export default function App() {
         selectedNo={selectedNo}
         onSelect={setSelectedNo}
         flyTarget={flyTarget}
+        selectedCorridor={corridorId}
+        onPickCorridor={setCorridorId}
       />
       <ControlPanel
         time={fmtTime(simTime)}
@@ -131,9 +145,23 @@ export default function App() {
         onLive={goLive}
         onToggle={() => setPlaying((p) => !p)}
         onReset={goLive}
+        onCorridor={setCorridorId}
       >
         <SearchBox trains={effectiveTrains} onPickTrain={pickTrain} onPickStation={pickStation} />
       </ControlPanel>
+      {corridor && (
+        <TrainDiagram
+          corridor={corridor}
+          trains={effectiveTrains}
+          simMinutes={simMinutes}
+          selectedNo={selectedNo}
+          onPickTrain={(no) => {
+            const t = effectiveTrains.find((x) => x.no === no)
+            if (t) pickTrain(t)
+          }}
+          onClose={() => setCorridorId(null)}
+        />
+      )}
       <Timeline
         minutes={simMinutes}
         onScrub={scrubTo}
@@ -145,6 +173,8 @@ export default function App() {
           train={selectedTrain}
           simMinutes={simMinutes}
           onClose={() => setSelectedNo(null)}
+          onDiagram={selectedTrainCorridor ? () => setCorridorId(selectedTrainCorridor.id) : null}
+          diagramName={selectedTrainCorridor?.name}
         />
       )}
       <div className={`legend${legendOpen ? '' : ' collapsed'}`}>
