@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import { stations, stationsMap } from '../data/stations'
 import { trains } from '../data/trains'
+import { railLines } from '../data/lines'
 import { computeTrainPosition } from '../lib/position'
 import { wgs84ToGcj02 } from '../lib/coord'
 import { trainTypeInfo } from '../lib/train-type'
@@ -67,16 +68,27 @@ export default function TrainMap({ simMinutes, selectedNo, onSelect, flyTarget }
 
     L.tileLayer(
       'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
-      { subdomains: ['1', '2', '3', '4'], maxZoom: 18, attribution: '&copy; 高德地图' },
+      {
+        subdomains: ['1', '2', '3', '4'],
+        maxZoom: 18,
+        attribution: '&copy; 高德地图 | 线路几何 &copy; OpenStreetMap contributors (ODbL)',
+      },
     ).addTo(map)
 
-    // 每趟车的经停连线（细线成网，点击可选中车次）
-    for (const t of trains) {
-      const pts = t.stops.map((s) => stationsMap[s.code]).filter(Boolean).map(gcjOf)
-      if (pts.length < 2) continue
-      L.polyline(pts, { color: '#4a6fa5', weight: 1.2, opacity: 0.35 })
-        .on('click', () => onSelectRef.current(t.no))
-        .addTo(map)
+    // 真实铁路线位（OSM 几何，WGS-84 → GCJ-02；普速在下、高铁在上）
+    const toGcjLine = (line) => {
+      const out = new Array(line.length)
+      for (let i = 0; i < line.length; i++) {
+        const p = gcj(line[i][0], line[i][1])
+        out[i] = [p.lat, p.lng]
+      }
+      return out
+    }
+    for (const line of railLines.conv) {
+      L.polyline(toGcjLine(line), { color: '#8a8f98', weight: 1, opacity: 0.55, interactive: false }).addTo(map)
+    }
+    for (const line of railLines.hsr) {
+      L.polyline(toGcjLine(line), { color: '#4a6fa5', weight: 1.8, opacity: 0.75, interactive: false }).addTo(map)
     }
 
     // 车站分层：精确坐标站常驻；城市级站 zoom≥7 才显示（减噪）

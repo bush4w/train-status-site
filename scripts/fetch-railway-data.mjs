@@ -98,11 +98,19 @@ function mergeTelecodes(allStations) {
 }
 
 // ---------- 全国地理编码 ----------
+// 坐标优先级：OSM 实测站点坐标（build-lines.mjs 产物）> 京沪整理精确坐标 > 城市级近似
 function geocodeNational(allStations) {
-  const preciseMap = Object.fromEntries(JINGHU_STATIONS.map((s) => [s.name, { lat: s.lat, lng: s.lng }]))
+  const jinghuPrecise = Object.fromEntries(JINGHU_STATIONS.map((s) => [s.name, { lat: s.lat, lng: s.lng }]))
+  const osmFile = '.cache/osm/osm-station-coords.json'
+  let osmCoords = {}
+  if (existsSync(osmFile)) {
+    osmCoords = JSON.parse(readFileSync(osmFile, 'utf8'))
+    console.log(`✓ OSM 精确站点坐标：${Object.keys(osmCoords).length} 站可用`)
+  }
+  const preciseMap = { ...jinghuPrecise, ...osmCoords }
   const { geocoded, missing } = geocodeStations(allStations, preciseMap)
   console.log(`✓ 全国地理编码：${geocoded.length} 站（精确 ${geocoded.filter((s) => s.precise).length}，城市级 ${geocoded.filter((s) => !s.precise).length}），未覆盖 ${missing.length}`)
-  return geocoded
+  return { geocoded, osmCount: Object.keys(osmCoords).length }
 }
 
 // ---------- 车次目录（getTrainName，免 cookie 明文） ----------
@@ -551,6 +559,7 @@ async function main() {
   let timetableSource
   let delayAsOf = null
   let delaySource
+  let osmCount = 0
 
   if (scope === 'jinghu') {
     stations = mergeTelecodes(allStations)
@@ -585,7 +594,9 @@ async function main() {
     }
   } else {
     // 全国模式
-    stations = geocodeNational(allStations)
+    const geo = geocodeNational(allStations)
+    stations = geo.geocoded
+    osmCount = geo.osmCount
     const geocodedByName = Object.fromEntries(stations.map((s) => [s.name, s]))
     const catalog = await loadCatalog(date)
     const selected = selectNationalTrains(catalog, geocodedByName)
@@ -629,7 +640,12 @@ async function main() {
   }
   const sources = {
     telecode: DATA_SOURCES.telecode,
-    coord: scope === 'jinghu' ? DATA_SOURCES.coord : '京沪23站精确整理；其余城市级坐标+站名哈希微偏移（公开地理信息整理）',
+    coord:
+      scope === 'jinghu'
+        ? DATA_SOURCES.coord
+        : osmCount > 0
+          ? `OSM 实测站点坐标 ${osmCount} 站（© OpenStreetMap contributors, ODbL）；其余城市级近似（公开地理信息整理）`
+          : '京沪23站精确整理；其余城市级坐标+站名哈希微偏移（公开地理信息整理）',
     timetable: timetableSource,
     delay: delaySource,
   }
