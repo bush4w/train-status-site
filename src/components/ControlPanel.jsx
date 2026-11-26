@@ -1,3 +1,5 @@
+import { CORRIDORS } from '../lib/diagram'
+
 const SPEEDS = [30, 60, 120, 300, 600]
 
 export default function ControlPanel({
@@ -9,6 +11,7 @@ export default function ControlPanel({
   onLive,
   onToggle,
   onReset,
+  onCorridor,
   children,
 }) {
   return (
@@ -47,6 +50,21 @@ export default function ControlPanel({
           ↺ 回到实时
         </button>
       </div>
+
+      <select
+        className="corridor-select"
+        value=""
+        onChange={(e) => {
+          if (e.target.value) onCorridor(e.target.value)
+        }}
+      >
+        <option value="">📈 线路运行图…</option>
+        {CORRIDORS.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}（{c.stations[0]}—{c.stations[c.stations.length - 1]}）
+          </option>
+        ))}
+      </select>
 
       <div className="panel-hint">点击列车查看详情 · 拖动底部时间轴可回放</div>
     </div>

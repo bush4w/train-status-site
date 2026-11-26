@@ -27,6 +27,7 @@ import {
   parseDelayMessage,
 } from './lib/otn-parser.mjs'
 import { JINGHU_STATIONS, JINGHU_TRAINS, DATA_SOURCES } from './data/jinghu-line.mjs'
+import { CORRIDORS } from './data/corridors.mjs'
 import { CITY_COORDS } from './data/city-coords.mjs'
 import { geocodeStations } from './lib/geocode.mjs'
 import { shuffled } from './lib/schedule.mjs'
@@ -176,6 +177,20 @@ function selectNationalTrains(catalog, geocodedByName) {
   }
   // 固定包含京沪标杆（动态选取，适应车次换编）
   for (const t of pickJinghuFlagships(eligible)) push(t)
+  // 走廊端点 OD 加密：每条客运走廊选至多 5 趟起讫匹配车次（运行图有车可画）
+  for (const c of CORRIDORS) {
+    const a = c.stations[0]
+    const b = c.stations[c.stations.length - 1]
+    const pairs = eligible.filter((t) => t.route === `${a}-${b}` || t.route === `${b}-${a}`)
+    if (!pairs.length) continue
+    const stride = Math.max(1, Math.floor(pairs.length / 5))
+    let count = 0
+    for (let i = 0; i < pairs.length && count < 5; i += stride) {
+      const before = selected.length
+      push(pairs[i])
+      if (selected.length > before) count++
+    }
+  }
   // 按类型配额等距采样（目录按车次号排序 ≈ 路局/地域聚簇，等距取样保证分散）
   for (const [ty, quota] of Object.entries(NATIONAL_QUOTAS)) {
     const pool = eligible.filter((t) => trainType(t.code) === ty && !seen.has(t.train_no))
@@ -207,6 +222,8 @@ async function fetchTimetableForTrain(t, date) {
 }
 
 // 经停全部可定位 + 当日不跨零点（前端单位置模型限制，跨零点车跳过并计数）
+// 区段车兼容：12306 对部分跨局长途车只返回区段站表（首站带到达时刻，如 G1372
+// 昆明南—上海虹桥仅返回长沙南起段）→ 首站视同始发（arr 置 null），按区段呈现
 function buildTrain(t, json, geocodedByName) {
   const stops = parseTrainStops(json)
   if (stops.length < 2) return { skip: 'empty' }
@@ -223,12 +240,18 @@ function buildTrain(t, json, geocodedByName) {
     }
     mapped.push({ code: st.code, arr: s.arr, dep: s.dep })
   }
-  return { train: { no: t.code, route: t.route, train_no: t.train_no, delay: 0, stops: mapped } }
+  let segmented = false
+  if (mapped[0].arr != null) {
+    mapped[0].arr = null
+    segmented = true
+  }
+  return { train: { no: t.code, route: t.route, train_no: t.train_no, delay: 0, stops: mapped }, segmented }
 }
 
 async function fetchNationalTimetables(selected, date, geocodedByName) {
   const trains = []
   const skipStat = { empty: 0, ungeocoded: 0, overnight: 0 }
+  let segmentedCount = 0
   let done = 0
   for (const t of selected) {
     done++
@@ -243,10 +266,13 @@ async function fetchNationalTimetables(selected, date, geocodedByName) {
     }
     const r = buildTrain(t, json, geocodedByName)
     if (r.skip) skipStat[r.skip]++
-    else trains.push(r.train)
+    else {
+      trains.push(r.train)
+      if (r.segmented) segmentedCount++
+    }
   }
   console.log(
-    `✓ 全国时刻表：${trains.length} 趟可用（跳过：跨零点 ${skipStat.overnight}，站点未覆盖 ${skipStat.ungeocoded}，空/失败 ${skipStat.empty}）`,
+    `✓ 全国时刻表：${trains.length} 趟可用（区段车 ${segmentedCount}；跳过：跨零点 ${skipStat.overnight}，站点未覆盖 ${skipStat.ungeocoded}，空/失败 ${skipStat.empty}）`,
   )
   if (trains.length < 30) throw new Error(`可用车次过少（${trains.length}），放弃全国模式`)
   return trains

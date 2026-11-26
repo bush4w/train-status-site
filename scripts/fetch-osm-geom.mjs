@@ -26,11 +26,9 @@ const MAX_WAIT_MIN = Number(args['max-wait-min'] ?? 150)
 const OUT_DIR = '.cache/osm/tiles'
 const UA = 'train-status-site/1.0 (personal learning project; low-frequency tiled extraction)'
 
-const MIRRORS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-]
+// 实测（2026-11-26 经本地代理）：主站可用但间歇 502（容量波动）；
+// kumi.systems / private.coffee 不可达，osm.ch 数据为空，mail.ru 504 —— 只保留主站，靠退避重试
+const MIRRORS = ['https://overpass-api.de/api/interpreter']
 
 // 中国范围（含中老铁路境外段）：lat 17.5–54.5，lon 73–136
 const BBOX = { s: 17.5, n: 54.5, w: 73, e: 136 }
@@ -76,16 +74,10 @@ async function fetchTile(layer, size, lat, lon) {
   const bbox = `(${lat},${lon},${Math.min(lat + size, BBOX.n)},${Math.min(lon + size, BBOX.e)})`
   const q = LAYERS[layer](bbox)
   const timeout = size >= 6 ? 300 : size >= 3 ? 240 : 180
-  const plan = [
-    { m: 0, wait: 0 },
-    { m: 1, wait: 15 },
-    { m: 2, wait: 30 },
-    { m: 0, wait: 60 },
-    { m: 1, wait: 120 },
-  ]
+  const plan = [{ w: 0 }, { w: 20 }, { w: 60 }, { w: 120 }, { w: 240 }] // 主站容量波动：递增退避
   for (const step of plan) {
-    if (step.wait) await sleep(step.wait * 1000)
-    const mirror = MIRRORS[step.m]
+    if (step.w) await sleep(step.w * 1000)
+    const mirror = MIRRORS[0]
     const host = new URL(mirror).host
     let status = 0
     try {
