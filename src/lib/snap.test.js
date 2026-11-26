@@ -4,6 +4,25 @@ import { buildRailIndex, nearestOnIndex, snapChord, buildTrainPath, posAtKm, kmF
 // L 形线位：(0,0) → (0,0.02) → (0.01,0.02)（[lat,lng]）
 const LINE = [[0, 0], [0, 0.02], [0.01, 0.02]]
 const INDEX = buildRailIndex({ hsr: [LINE], conv: [] })
+const KM_PER_DEG = 111.32
+
+/** 点到折线的最近距离（km） */
+function minKmToPolyline(lat, lng, pts) {
+  let best = Infinity
+  const cosLat = Math.cos((lat * Math.PI) / 180)
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, ay] = pts[i - 1]
+    const [bx, by] = pts[i]
+    const dx = (by - ay) * cosLat
+    const dy = bx - ax
+    const len2 = dx * dx + dy * dy
+    let t = len2 === 0 ? 0 : (((lng - ay) * cosLat) * dx + (lat - ax) * dy) / len2
+    t = Math.max(0, Math.min(1, t))
+    const d = Math.hypot((lng - (ay + (by - ay) * t)) * cosLat, lat - (ax + (bx - ax) * t)) * KM_PER_DEG
+    if (d < best) best = d
+  }
+  return best
+}
 
 describe('nearestOnIndex', () => {
   it('点投影到最近线段', () => {
@@ -13,9 +32,21 @@ describe('nearestOnIndex', () => {
     expect(p.lng).toBeCloseTo(0.001, 3)
     expect(p.line).toBe(0)
   })
-  it('远离线位（网格邻域内无线段）返回 null，交由弦线兜底', () => {
-    // 网格索引只查 3×3 邻格，远处点直接 miss —— 这正是设计行为
+  it('超出 maxKm（无铁路可吸附）返回 null，交由弦线兜底', () => {
     expect(nearestOnIndex(INDEX, 1, 1)).toBeNull()
+  })
+  it('逐环外扩：偏离两格以上的点也能吸附', () => {
+    // 纬度 32° 上一条东西向线；点在其北侧 0.15°（约 16.7km），旧实现 3×3 邻格会 miss
+    const line = buildRailIndex({ hsr: [[[32, 105], [32, 105.2]]], conv: [] })
+    const p = nearestOnIndex(line, 32.15, 105.1)
+    expect(p).not.toBeNull()
+    expect(Math.sqrt(p.d2) * KM_PER_DEG).toBeCloseTo(16.7, 0)
+  })
+  it('距离度量按经纬缩放：正北 10km 应算作 10km（纬度 32°）', () => {
+    const line = buildRailIndex({ hsr: [[[32, 105], [32, 105.2]]], conv: [] })
+    const p = nearestOnIndex(line, 32 + 10 / KM_PER_DEG, 105.1)
+    expect(p).not.toBeNull()
+    expect(Math.sqrt(p.d2) * KM_PER_DEG).toBeCloseTo(10, 1)
   })
   it('preferLine 在 1.5× 距离内保持同线', () => {
     // 两条平行线：LINE 在 lat=0，PARALLEL 在 lat=0.0008（约 0.8km 北侧）
@@ -47,6 +78,15 @@ describe('snapChord', () => {
   })
   it('超出 maxKm 返回 null（弦线兜底）', () => {
     expect(snapChord([0.5, 0.5], [0.51, 0.5], INDEX, 8, 5)).toBeNull()
+  })
+  it('弯线中段偏离弦线 11km 仍可吸附，采样按长度自适应', () => {
+    // 弓形线位：站 A、B 在两端，弦线沿 lng 直连，中段离弦线 0.1°≈11km
+    const rail = [[0, 0], [0.1, 0.1], [0.1, 0.35], [0, 0.45]]
+    const idx = buildRailIndex({ hsr: [rail], conv: [] })
+    const seg = snapChord([0, 0], [0, 0.45], idx)
+    expect(seg).not.toBeNull()
+    expect(seg.length).toBeGreaterThan(8) // 50km 弦线 → 自动加密到 ≥8 段
+    for (const [lat, lng] of seg) expect(minKmToPolyline(lat, lng, rail)).toBeLessThan(0.2)
   })
 })
 

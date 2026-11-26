@@ -59,3 +59,12 @@ export function trainTypeInfo(no) {
   }
   return base
 }
+
+/**
+ * 车次所属线路网络，与 lines.json 的图层键同名
+ * @param {string} no 车次号
+ * @returns {'hsr'|'conv'} 高铁/动车组族 或 普速族
+ */
+export function trainCategory(no) {
+  return trainTypeInfo(no).shape === 'emu' ? 'hsr' : 'conv'
+}

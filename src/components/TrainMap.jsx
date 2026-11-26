@@ -1,8 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import L from 'leaflet'
 import { computeTrainStatus } from '../lib/position'
 import { wgs84ToGcj02 } from '../lib/coord'
-import { trainTypeInfo } from '../lib/train-type'
+import { trainTypeInfo, trainCategory } from '../lib/train-type'
 import { CORRIDORS } from '../lib/diagram'
 import { buildRailIndex, buildTrainPath, posAtKm, kmFromStatus, snapChord } from '../lib/snap'
 import { buildRouteGraph, routePair } from '../lib/route-graph'
@@ -65,7 +65,7 @@ function tooltipHtml(t, simMinutes, stationsMap) {
   )
 }
 
-export default function TrainMap({ stations, stationsMap, trains, simMinutes, selectedNo, onSelect, flyTarget, selectedCorridor, onPickCorridor }) {
+export default function TrainMap({ stations, stationsMap, trains, simMinutes, selectedNo, onSelect, flyTarget, selectedCorridor, onPickCorridor, lineFilter = 'all' }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef(new Map())
@@ -87,6 +87,16 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
   selectedCorridorRef.current = selectedCorridor
   const onPickCorridorRef = useRef(onPickCorridor)
   onPickCorridorRef.current = onPickCorridor
+  const lineFilterRef = useRef(lineFilter)
+  lineFilterRef.current = lineFilter
+
+  // 当前图层的车次池：只画本层列车（全量 trains 仍用于建路径与车站分级）
+  const layerTrains = useMemo(
+    () => (lineFilter === 'all' ? trains : trains.filter((t) => trainCategory(t.no) === lineFilter)),
+    [trains, lineFilter],
+  )
+  const layerTrainsRef = useRef(layerTrains)
+  layerTrainsRef.current = layerTrains
 
   const stationLayersRef = useRef(null)
   const lineLayerRef = useRef(null)
@@ -111,19 +121,33 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
     return [s.lat, s.lng]
   }
 
+  // ---------- 底图线路样式（图层过滤 + 选中走廊时淡化） ----------
+  function applyLineStyles() {
+    const dim = Boolean(selectedCorridorRef.current)
+    const mode = lineFilterRef.current
+    for (const [kind, g] of Object.entries(lineGroupsRef.current)) {
+      const visible = mode === 'all' || mode === kind
+      // 单独查看某一图层时略提亮，避免普速灰细线显得过虚
+      const base = mode === 'all' ? g.baseOpacity : Math.min(1, g.baseOpacity * 1.35)
+      g.pl.setStyle({ opacity: visible ? (dim ? base * 0.3 : base) : 0 })
+    }
+  }
+
   // ---------- marker 同步（LOD + 视野过滤 + 增删 diff） ----------
   function syncMarkers() {
     const map = mapRef.current
     if (!map) return
     const zoom = map.getZoom()
-    const cap = zoomLevelCap(zoom)
+    const pool = layerTrainsRef.current
+    // 本层车次本就不多时跳过 LOD 降级，否则低缩放下整层列车（如普速）一辆都看不到
+    const cap = pool.length <= MAX_MARKERS ? 5 : zoomLevelCap(zoom)
     const bounds = map.getBounds().pad(0.08)
     const showLabel = zoom >= 7
     const sm = stationsMapRef.current
     const seen = new Set()
     let count = 0
 
-    for (const t of trainsRef.current) {
+    for (const t of pool) {
       const selected = t.no === selectedNoRef.current
       if (!selected && trainLevel(t.no) > cap) continue
       const st = computeTrainStatus(t, sm, simRef.current)
@@ -267,6 +291,7 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
         }
         drawGroup('conv', { color: '#8a8f98', weight: 1, opacity: 0.55 })
         drawGroup('hsr', { color: '#4a6fa5', weight: 1.8, opacity: 0.75 })
+        applyLineStyles()
 
         // 索引与吸附路径
         const index = buildRailIndex(j)
@@ -306,20 +331,27 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
         for (const c of CORRIDORS) {
           const sts = c.stations.map((n) => byName[n]).filter(Boolean)
           if (sts.length < 3) continue
-          const pts = []
-          for (let k = 0; k < sts.length - 1; k++) {
-            const a = [sts[k].lat, sts[k].lng]
-            const b = [sts[k + 1].lat, sts[k + 1].lng]
-            // 与列车路径同源：采样优先 → 路由图兜底（走廊高亮与列车轨迹一致）
-            const cacheKey = `${a[0].toFixed(3)},${a[1].toFixed(3)}|${b[0].toFixed(3)},${b[1].toFixed(3)}`
-            let seg = pairCache.get(cacheKey)
-            if (!seg) {
-              seg = snapChord(a, b, index) || router(a, b) || [a, b]
-              pairCache.set(cacheKey, seg)
+          const pre = j.corridors?.[c.id]?.points
+          let gj
+          if (pre && pre.length >= 2) {
+            // 构建期已按原始 OSM way 求好真实线位（简化图断链会让长走廊退化成直线）
+            gj = toGcjLine(pre)
+          } else {
+            const pts = []
+            for (let k = 0; k < sts.length - 1; k++) {
+              const a = [sts[k].lat, sts[k].lng]
+              const b = [sts[k + 1].lat, sts[k + 1].lng]
+              // 与列车路径同源：采样优先 → 路由图兜底（走廊高亮与列车轨迹一致）
+              const cacheKey = `${a[0].toFixed(3)},${a[1].toFixed(3)}|${b[0].toFixed(3)},${b[1].toFixed(3)}`
+              let seg = pairCache.get(cacheKey)
+              if (!seg) {
+                seg = snapChord(a, b, index) || router(a, b) || [a, b]
+                pairCache.set(cacheKey, seg)
+              }
+              for (let q = pts.length ? 1 : 0; q < seg.length; q++) pts.push(seg[q])
             }
-            for (let q = pts.length ? 1 : 0; q < seg.length; q++) pts.push(seg[q])
+            gj = toGcjLine(pts)
           }
-          const gj = toGcjLine(pts)
           // 选中视觉：宽光晕 + 流动虚线双线（SVG 渲染，CSS 动画驱动）
           const halo = L.polyline(gj, { color: '#f39c12', weight: 13, opacity: 0, interactive: false, renderer: svgRenderer }).addTo(layer)
           const core = L.polyline(gj, {
@@ -369,12 +401,16 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
       core.setStyle({ opacity: on ? 1 : 0 })
     }
     // 选中走廊时底图线路淡化，突出所选
-    const dim = Boolean(selectedCorridor)
-    for (const { pl, baseOpacity } of Object.values(lineGroupsRef.current)) {
-      pl.setStyle({ opacity: dim ? baseOpacity * 0.3 : baseOpacity })
-    }
+    applyLineStyles()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNo, selectedCorridor])
+
+  // ---------- 图层切换 → 线路与列车即时显隐 ----------
+  useEffect(() => {
+    applyLineStyles()
+    syncMarkers()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineFilter])
 
   // ---------- 搜索定位飞行 ----------
   useEffect(() => {

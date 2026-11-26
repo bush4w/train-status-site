@@ -8,7 +8,7 @@ import TrainDiagram from './components/TrainDiagram'
 import { meta } from './data/meta'
 import { statusColor, ON_TIME_COLOR, DELAY_COLOR } from './lib/status'
 import { computeTrainPosition } from './lib/position'
-import { TRAIN_TYPES } from './lib/train-type'
+import { TRAIN_TYPES, trainCategory } from './lib/train-type'
 import { CORRIDORS, resolveCorridor, corridorOfTrain } from './lib/diagram'
 
 export default function App() {
@@ -26,6 +26,8 @@ export default function App() {
   const [legendOpen, setLegendOpen] = useState(true)
   const [liveDelays, setLiveDelays] = useState(null)
   const [corridorId, setCorridorId] = useState(null)
+  // 线路图层：全部 / 仅高铁（hsr）/ 仅普速（conv）
+  const [lineFilter, setLineFilter] = useState('all')
   const liveModeRef = useRef(liveMode)
   liveModeRef.current = liveMode
 
@@ -125,17 +127,30 @@ export default function App() {
 
   const selectedTrain = effectiveTrains.find((t) => t.no === selectedNo) || null
   const selectedTrainCorridor = selectedTrain ? corridorOfTrain(selectedTrain, allCorridors) : null
+
+  // 图层过滤：图例计数与晚点榜单只统计当前图层的车次（地图侧由 TrainMap 按同一判定过滤）
+  const mapTrains = useMemo(
+    () => (lineFilter === 'all' ? effectiveTrains : effectiveTrains.filter((t) => trainCategory(t.no) === lineFilter)),
+    [effectiveTrains, lineFilter],
+  )
+  const changeLayer = (mode) => {
+    setLineFilter(mode)
+    if (mode !== 'all' && selectedNo && trainCategory(selectedNo) !== mode) setSelectedNo(null)
+  }
   const lateTop = useMemo(
     () =>
-      [...effectiveTrains]
+      [...mapTrains]
         .filter((t) => t.delay > 0)
         .sort((a, b) => b.delay - a.delay)
         .slice(0, 5),
-    [effectiveTrains],
+    [mapTrains],
   )
 
   const flySeq = flyTarget?.seq ?? 0
   const pickTrain = (t) => {
+    // 搜到不在当前图层的车次时，自动切到它所属的图层，保证看得见
+    const cat = trainCategory(t.no)
+    if (lineFilter !== 'all' && cat !== lineFilter) setLineFilter(cat)
     setSelectedNo(t.no)
     const pos = computeTrainPosition(t, data.stationsMap, simMinutes)
     setFlyTarget({ lat: pos.lat, lng: pos.lng, zoom: 9, seq: flySeq + 1 })
@@ -169,6 +184,7 @@ export default function App() {
         flyTarget={flyTarget}
         selectedCorridor={corridorId}
         onPickCorridor={setCorridorId}
+        lineFilter={lineFilter}
       />
       <ControlPanel
         time={fmtTime(simTime)}
@@ -183,6 +199,8 @@ export default function App() {
         corridor={corridor}
         onShowCorridor={() => corridor && setCorridorId(corridor.id)}
         onClearCorridor={() => setCorridorId(null)}
+        lineFilter={lineFilter}
+        onLineFilter={changeLayer}
       >
         <SearchBox stations={data.stations} trains={effectiveTrains} onPickTrain={pickTrain} onPickStation={pickStation} />
       </ControlPanel>
@@ -228,12 +246,16 @@ export default function App() {
         {legendOpen && (
           <div className="legend-body">
             <div className="type-grid">
-              {TRAIN_TYPES.map((t) => (
-                <span className="type-chip" key={t.letter} title={`${t.label}：${t.desc}`}>
-                  <i className={`chip-shape shape-${t.shape}`} style={{ '--tc': t.color }} />
-                  {t.letter}·{t.label}
-                </span>
-              ))}
+              {TRAIN_TYPES.map((t) => {
+                // 不属于当前图层（高铁/普速）的车型淡化，保持图例与地图一致
+                const dim = lineFilter !== 'all' && trainCategory(t.letter) !== lineFilter
+                return (
+                  <span className={`type-chip${dim ? ' dim' : ''}`} key={t.letter} title={`${t.label}：${t.desc}`}>
+                    <i className={`chip-shape shape-${t.shape}`} style={{ '--tc': t.color }} />
+                    {t.letter}·{t.label}
+                  </span>
+                )
+              })}
             </div>
             <div className="item legend-status">
               <span className="ring-demo ontime" />
@@ -242,7 +264,7 @@ export default function App() {
               <span>晚点</span>
             </div>
             <div className="item muted">
-              在图车次 {effectiveTrains.length} · 车站 {meta.counts?.stations ?? data.stations.length}
+              在图车次 {mapTrains.length} · 车站 {meta.counts?.stations ?? data.stations.length}
             </div>
             <div className="item muted">缩放分级：远景大站快车，放大显示更多列车与车站</div>
             {lateTop.length === 0 && <div className="item muted">抽样车次当前均正点</div>}

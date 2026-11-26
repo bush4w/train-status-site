@@ -42,10 +42,10 @@ describe('buildRouteGraph / findRoute', () => {
 
 describe('routePair 绕行校验', () => {
   it('绕行超过弦线 2.5 倍 + 余量时拒绝（短弦严格）', () => {
-    // 环线：弦线 111m，沿环走约 22km
-    const loop = [[0, 0], [0, 0.1], [0.001, 0.1], [0.001, 0]]
+    // 环线：弦线 2.2km（两端相距 0.02° > 近端连接半径），沿环走约 24km
+    const loop = [[0, 0], [0, 0.1], [0.02, 0.1], [0.02, 0]]
     const g = buildRouteGraph({ hsr: [loop], conv: [] })
-    expect(routePair(g, [0, 0], [0.001, 0])).toBeNull()
+    expect(routePair(g, [0, 0], [0.02, 0])).toBeNull()
   })
 
   it('正常绕行（如穿山线路）可通过', () => {

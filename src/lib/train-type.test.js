@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { trainTypeInfo, TRAIN_TYPES } from './train-type'
+import { trainTypeInfo, trainCategory, TRAIN_TYPES } from './train-type'
 
 describe('trainTypeInfo（新版车次编排规定 2026-10）', () => {
   it('动车组族 7 字头 = 胶囊形', () => {
@@ -36,5 +36,26 @@ describe('trainTypeInfo（新版车次编排规定 2026-10）', () => {
   it('类型颜色互不相同（图例可辨识）', () => {
     const colors = TRAIN_TYPES.map((t) => t.color)
     expect(new Set(colors).size).toBe(colors.length)
+  })
+})
+
+describe('trainCategory（线路图层归属）', () => {
+  it('动车组族 → hsr', () => {
+    for (const no of ['X1', 'G1', 'T109', 'K101', 'D3617', 'C20', 'S124']) {
+      expect(trainCategory(no), no).toBe('hsr')
+    }
+  })
+  it('普速族 → conv', () => {
+    for (const no of ['Z281', 'N3', 'V6061', 'Y1001', 'L1234', '1461']) {
+      expect(trainCategory(no), no).toBe('conv')
+    }
+  })
+  it('未知字头回落普速样式', () => {
+    expect(trainCategory('A123')).toBe('conv')
+  })
+  it('每种图例车型都能归类', () => {
+    for (const t of TRAIN_TYPES) {
+      expect(['hsr', 'conv']).toContain(trainCategory(t.letter))
+    }
   })
 })

@@ -49,9 +49,12 @@ export function buildOsmStationIndex(elements) {
  * @param {number} refLng 参考经度
  * @param {Map} osmIndex buildOsmStationIndex 产物
  * @param {number} maxKm 消歧半径（默认 80km；城市级坐标误差 ±30km 内）
+ * @param {number} maxKmUnique 唯一同名候选的放宽半径（默认 350km）
+ *        县级市/远郊站常被地理编码到上级市（如玉门 → 酒泉 150km、柳园南 → 酒泉 300km），
+ *        若 OSM 里该站名只有一个候选坐标，放宽半径即可救回，避免退回城市级坐标。
  * @returns {{lat:number, lon:number, km:number}|null}
  */
-export function matchStation(name, refLat, refLng, osmIndex, maxKm = 80) {
+export function matchStation(name, refLat, refLng, osmIndex, maxKm = 80, maxKmUnique = 350) {
   const cands = osmIndex.get(normalizeStationName(name))
   if (!cands?.length) return null
   let best = null
@@ -59,5 +62,8 @@ export function matchStation(name, refLat, refLng, osmIndex, maxKm = 80) {
     const km = approxKm(refLat, refLng, c.lat, c.lon)
     if (!best || km < best.km) best = { lat: c.lat, lon: c.lon, km }
   }
-  return best && best.km <= maxKm ? best : null
+  // 同一车站在 OSM 里常有 node + way center 两条记录（相差几米），按 ≤2km 视为同一候选
+  const unique = cands.every((c) => approxKm(cands[0].lat, cands[0].lon, c.lat, c.lon) <= 2)
+  const limit = unique ? maxKmUnique : maxKm
+  return best && best.km <= limit ? best : null
 }

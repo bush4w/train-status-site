@@ -6,7 +6,7 @@
 const KM_PER_DEG = 111.32
 const KEY = (lat, lng) => `${lat.toFixed(5)},${lng.toFixed(5)}`
 const CELL = 0.02 // 节点近端连接网格（°）
-const NEAR_DEG = 0.0006 // 近端连接半径（≈66m），修复 OSM 线位断链
+const NEAR_DEG = 0.008 // 近端连接半径（≈800m），修复简化几何/OSM 线位在站场、桥隧处的断链
 
 function dkm(a, b) {
   const cosLat = Math.cos((((a.lat ?? a[0]) + (b.lat ?? b[0])) / 2) * Math.PI / 180)
@@ -63,7 +63,7 @@ class Heap {
  * 由线位几何构建可路由的铁路图
  * @param {{hsr:number[][][], conv:number[][][]}} railLines
  */
-export function buildRouteGraph(railLines) {
+export function buildRouteGraph(railLines, { nearDeg = NEAR_DEG } = {}) {
   const nodes = [] // {lat,lng,adj:[[toId,wKm]]}
   const idByKey = new Map()
   const nodeOf = (lat, lng) => {
@@ -93,7 +93,7 @@ export function buildRouteGraph(railLines) {
   ;(railLines.hsr ?? []).forEach(addLine)
   ;(railLines.conv ?? []).forEach(addLine)
 
-  // 近端连接：网格内相距 ≤ NEAR_DEG 的节点互连（OSM 断链修复）
+  // 近端连接：网格内相距 ≤ nearDeg 的节点互连（OSM 断链修复）
   const grid = new Map()
   nodes.forEach((n, id) => {
     const k = `${Math.floor(n.lat / CELL)}_${Math.floor(n.lng / CELL)}`
@@ -111,8 +111,8 @@ export function buildRouteGraph(railLines) {
         for (const other of arr) {
           if (other <= id) continue
           const o = nodes[other]
-          if (Math.abs(o.lat - n.lat) > NEAR_DEG || Math.abs(o.lng - n.lng) > NEAR_DEG) continue
-          if (dkm(n, o) <= NEAR_DEG * KM_PER_DEG) addEdge(id, other)
+          if (Math.abs(o.lat - n.lat) > nearDeg || Math.abs(o.lng - n.lng) > nearDeg) continue
+          if (dkm(n, o) <= nearDeg * KM_PER_DEG) addEdge(id, other)
         }
       }
     }
@@ -127,7 +127,31 @@ export function buildRouteGraph(railLines) {
     arr.push(id)
   })
 
-  return { nodes, nodeGrid }
+  // 连通分量：站点附近常有几节站线/支线碎片自成一块，路由端点要避开它们
+  const comp = new Int32Array(nodes.length).fill(-1)
+  const stack = []
+  let nc = 0
+  for (let i = 0; i < nodes.length; i++) {
+    if (comp[i] >= 0) continue
+    comp[i] = nc
+    stack.push(i)
+    while (stack.length) {
+      const u = stack.pop()
+      for (const [v] of nodes[u].adj) {
+        if (comp[v] < 0) {
+          comp[v] = nc
+          stack.push(v)
+        }
+      }
+    }
+    nc++
+  }
+  const sizes = new Int32Array(nc)
+  for (let i = 0; i < nodes.length; i++) sizes[comp[i]]++
+  const compSize = new Int32Array(nodes.length)
+  for (let i = 0; i < nodes.length; i++) compSize[i] = sizes[comp[i]]
+
+  return { nodes, nodeGrid, comp, compSize }
 }
 
 /** 最近节点（搜索半径 maxKm，按 3×3 邻格逐级扩大） */
@@ -196,21 +220,95 @@ export function findRoute(graph, fromId, toId, maxKm = 3000) {
   return { pts, km: dist[toId] }
 }
 
+const MIN_COMP = 30 // 连通块节点数低于此值视为站线/支线碎片
+
 /**
- * 站对路由：两端吸附到图上节点，求真实线路路径
- * 校验：路径长度不得超过弦线的 3 倍（防绕行到无关网络）；否则返回 null
+ * 最近若干候选节点（按距离升序）
+ * 站点附近常有多条支线/站线碎片，优先取主线连通块上的节点，
+ * 否则最近节点落在 2 几个节点的碎块上，路由会整段不可达
+ */
+export function nearNodes(graph, lat, lng, maxKm = 8, k = 6) {
+  const { nodes, nodeGrid, compSize } = graph
+  const la = Math.floor(lat / 0.05)
+  const ln = Math.floor(lng / 0.05)
+  const all = []
+  for (let r = 0; r <= 2; r++) {
+    for (let da = -r; da <= r; da++) {
+      for (let db = -r; db <= r; db++) {
+        if (r > 0 && Math.abs(da) !== r && Math.abs(db) !== r) continue
+        const arr = nodeGrid.get(`${la + da}_${ln + db}`)
+        if (!arr) continue
+        for (const id of arr) {
+          const km = dkm({ lat, lng }, nodes[id])
+          if (km <= maxKm) all.push([id, km])
+        }
+      }
+    }
+  }
+  all.sort((x, y) => x[1] - y[1])
+  const big = all.filter(([id]) => compSize[id] >= MIN_COMP)
+  return (big.length && big[0][1] <= 5 ? big : all).slice(0, k)
+}
+
+/**
+ * 站对路由：两端各取若干候选节点做多源最短路（吸附距离计入代价），
+ * 避免最近节点落在站场碎片上导致绕行到无关网络；
+ * 路径长度超过弦线 2.5 倍 + 余量时拒绝
  * @param {object} graph buildRouteGraph 产物
  * @param {number[]} a [lat,lng]
  * @param {number[]} b [lat,lng]
  */
 export function routePair(graph, a, b) {
-  const fromId = nearestNode(graph, a[0], a[1])
-  const toId = nearestNode(graph, b[0], b[1])
-  if (fromId == null || toId == null) return null
-  const route = findRoute(graph, fromId, toId)
-  if (!route || route.pts.length < 2) return null
+  const { nodes } = graph
   const chordKm = dkm({ lat: a[0], lng: a[1] }, { lat: b[0], lng: b[1] })
-  // 绕行校验：路径不超过弦线 2.5 倍 + 小额余量（短弦对同样严格，防错误绕行）
-  if (route.km > chordKm * 2.5 + Math.min(30, chordKm)) return null
-  return route.pts
+  const starts = nearNodes(graph, a[0], a[1])
+  const goals = nearNodes(graph, b[0], b[1])
+  if (!starts.length || !goals.length) return null
+  const snapPenalty = 1.2 // 吸附距离按 1.2 折入代价，宁可在断开的碎片旁多走几百米
+  const limit = chordKm * 2.5 + Math.min(30, chordKm)
+  const goalCost = new Map(goals.map(([id, d]) => [id, d * snapPenalty]))
+  const dist = new Float64Array(nodes.length).fill(Infinity)
+  const prev = new Int32Array(nodes.length).fill(-1)
+  const done = new Uint8Array(nodes.length)
+  const heap = new Heap()
+  for (const [id, d] of starts) {
+    const c = d * snapPenalty
+    if (c < dist[id]) {
+      dist[id] = c
+      heap.push(id, c)
+    }
+  }
+  let bestId = -1
+  let bestCost = Infinity
+  while (heap.size) {
+    const [d, u] = heap.pop()
+    if (done[u]) continue
+    done[u] = 1
+    const endCost = goalCost.get(u)
+    if (endCost !== undefined && d + endCost < bestCost) {
+      bestCost = d + endCost
+      bestId = u
+    }
+    if (bestId >= 0 && d >= bestCost) break
+    if (d > limit) break
+    for (const [v, w] of nodes[u].adj) {
+      if (done[v]) continue
+      const nd = d + w
+      if (nd < dist[v]) {
+        dist[v] = nd
+        prev[v] = u
+        heap.push(v, nd)
+      }
+    }
+  }
+  if (bestId < 0) return null
+  const ids = []
+  for (let u = bestId; u !== -1; u = prev[u]) ids.push(u)
+  ids.reverse()
+  const pts = ids.map((id) => [nodes[id].lat, nodes[id].lng])
+  if (pts.length < 2) return null
+  let km = 0
+  for (let i = 1; i < pts.length; i++) km += dkm({ lat: pts[i - 1][0], lng: pts[i - 1][1] }, { lat: pts[i][0], lng: pts[i][1] })
+  if (km > limit) return null
+  return pts
 }
