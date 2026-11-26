@@ -36,12 +36,42 @@ export function parseLeftTicketEntry(entry) {
 }
 
 /**
- * 解析 czxx/queryByTrainNo 响应 → 经停站数组
- * 响应格式（2026-11-25 浏览器态真实响应校准）：
+ * 解析 queryTrainInfo/getTrainName 响应 → 全国车次目录
+ * 实测（2026-11-26）：明文、无需浏览器态 cookies，单日约 1.4 万条
+ * 格式：{ status:true, data:[{ station_train_code:"G1(北京南-上海虹桥)", train_no:"24000000G10L" }] }
+ * @param {object} json
+ * @returns {{code:string, route:string, train_no:string}[]}
+ */
+export function parseTrainNameList(json) {
+  const rows = Array.isArray(json?.data) ? json.data : []
+  return rows
+    .map((r) => {
+      const m = String(r.station_train_code || '').match(/^([A-Za-z0-9]+)\(([^)]*)\)$/)
+      return m ? { code: m[1], route: m[2], train_no: r.train_no } : null
+    })
+    .filter(Boolean)
+}
+
+/**
+ * 按公开车次号 + 起讫站精确匹配目录条目（避免同车次号不同区段的幽灵车/支线车）
+ * @param {{code:string, route:string, train_no:string}[]} list
+ * @param {string} code  如 'G1'
+ * @param {string} start 始发站名，如 '北京南'
+ * @param {string} end   终到站名，如 '上海虹桥'
+ */
+export function matchTrainByName(list, code, start, end) {
+  return list.find((t) => t.code === code && t.route === `${start}-${end}`) || null
+}
+
+/**
+ * 解析 czxx/queryByTrainNo 或 queryTrainInfo/query 响应 → 经停站数组
+ * 两接口响应结构同构（2026-11-25/26 真实响应校准）：
  *   { data: { data: [{ station_name, station_train_code, arrive_time, start_time, station_no }] } }
  * 时间 "----" 表示无到/发时刻（始发站无到）；
  * **终到站的 start_time 被 12306 填为与 arrive_time 相同**（实测 G1 上海虹桥 11:24/11:24），
  * 归一为 null（终到站无发车）。
+ * 注意：两接口对在途列车均只返回**图定时刻**（实测 N3/G9 在途对比零差异，2026-11-26），
+ * 不含实际到发/正晚点字段；OT 字段实测恒为空数组。
  * @param {object} json
  * @returns {{name:string, arr:string|null, dep:string|null, no:string}[]}
  */

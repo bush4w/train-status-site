@@ -15,7 +15,13 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { parseStationNameJs, indexByName } from './lib/station-parser.mjs'
-import { isEncryptedResult, parseLeftTicketEntry, parseTrainStops } from './lib/otn-parser.mjs'
+import {
+  isEncryptedResult,
+  parseLeftTicketEntry,
+  parseTrainStops,
+  parseTrainNameList,
+  matchTrainByName,
+} from './lib/otn-parser.mjs'
 import { JINGHU_STATIONS, JINGHU_TRAINS, DATA_SOURCES } from './data/jinghu-line.mjs'
 
 const UA =
@@ -70,12 +76,73 @@ function mergeTelecodes(allStations) {
   })
 }
 
-// ---------- 步骤 3：浏览器态时刻表管道（--cookie 启用，2026-11-25 实测打通） ----------
 // 目标车次：2026 运行图实际开行、终到上海虹桥的京沪标杆车
 // （G101/G103 已停运；G3/G5 终到上海站——既有线站，不在高铁本线表，实测确认）
 const REAL_TARGETS = ['G1', 'G7', 'G9', 'G11', 'G13']
-// 演示晚点值（M3 接入真实正晚点；meta.js 已披露）
+// 演示晚点值（真实正晚点 Web 端受阻，见 PRD §5 zwdch 条目；meta.js 已披露）
 const DEMO_DELAY = { G9: 15 }
+
+// ---------- 步骤 3a：queryTrainInfo 免 cookie 链（主路径，2026-11-26 实测打通） ----------
+// getTrainName: 全国车次目录（含内部 train_no，明文，普通会话即可）
+// query:        全程时刻表（图定时刻，无正晚点字段——实测在途车与图定零差异）
+// 完全替代"加密 leftTicket → train_no → czxx"脆弱链路
+const QTI_HEADERS = {
+  'User-Agent': UA,
+  Referer: 'https://kyfw.12306.cn/otn/queryTrainInfo/init',
+  Accept: 'application/json, text/javascript, */*; q=0.01',
+  'X-Requested-With': 'XMLHttpRequest',
+}
+
+async function fetchTimetablesQTI(stations, date) {
+  const byName = indexByName(stations)
+  const cachePath = `${CACHE_DIR}/gettrainname_${date}.json`
+  let list
+  if (args.offline && existsSync(cachePath)) {
+    list = parseTrainNameList(JSON.parse(readFileSync(cachePath, 'utf8')))
+    console.log(`✓ 车次目录：本地缓存 ${list.length} 条`)
+  } else {
+    const res = await fetch(
+      `https://kyfw.12306.cn/otn/queryTrainInfo/getTrainName?date=${date}`,
+      { headers: QTI_HEADERS },
+    )
+    if (!res.ok) throw new Error(`getTrainName HTTP ${res.status}`)
+    const json = await res.json()
+    list = parseTrainNameList(json)
+    if (list.length < 1000) throw new Error(`车次目录解析异常：仅 ${list.length} 条`)
+    mkdirSync(CACHE_DIR, { recursive: true })
+    writeFileSync(cachePath, JSON.stringify(json))
+    console.log(`✓ 车次目录：在线抓取 ${list.length} 趟（免 cookie）`)
+  }
+
+  const targets = REAL_TARGETS.map((no) => matchTrainByName(list, no, '北京南', '上海虹桥')).filter(Boolean)
+  if (targets.length < 3) throw new Error(`目录中仅匹配到 ${targets.length} 趟目标车次`)
+
+  const trains = []
+  for (const t of targets) {
+    await politeDelay()
+    const url = `https://kyfw.12306.cn/otn/queryTrainInfo/query?leftTicketDTO.train_no=${t.train_no}&leftTicketDTO.train_date=${date}&rand_code=`
+    const res = await fetch(url, { headers: QTI_HEADERS })
+    const json = await res.json().catch(() => null)
+    mkdirSync(CACHE_DIR, { recursive: true })
+    writeFileSync(`${CACHE_DIR}/qti_${t.code}.json`, JSON.stringify(json, null, 2))
+    const stops = parseTrainStops(json)
+    if (!stops.length) {
+      console.warn(`⚠ ${t.code} 时刻表为空，跳过`)
+      continue
+    }
+    const mapped = stops.map((s) => ({ code: byName[s.name]?.code, arr: s.arr, dep: s.dep }))
+    if (mapped.some((s) => !s.code)) {
+      console.warn(`⚠ ${t.code} 含线路表外车站，跳过`)
+      continue
+    }
+    trains.push({ no: t.code, delay: DEMO_DELAY[t.code] || 0, stops: mapped })
+    console.log(`✓ 真实时刻表：${t.code}（${stops.length} 站，免 cookie）`)
+  }
+  if (!trains.length) throw new Error('queryTrainInfo 无可用时刻表')
+  return trains
+}
+
+// ---------- 步骤 3b：浏览器态时刻表管道（备用，--cookie 启用，2026-11-25 实测打通） ----------
 
 async function fetchTimetables12306(stations, cookie, date) {
   const byName = indexByName(stations)
@@ -251,20 +318,31 @@ async function main() {
   const stations = mergeTelecodes(allStations)
   console.log(`✓ 京沪线 ${stations.length} 站合并真实电报码`)
 
-  let trains
+  const date = args.date || tomorrow()
+  let trains = null
   let timetableSource = DATA_SOURCES.timetable
-  if (args.cookie) {
-    const date = args.date || tomorrow()
-    console.log(`→ 浏览器态模式：尝试 12306 真实时刻表（${date}）`)
-    try {
-      trains = await fetchTimetables12306(stations, args.cookie, date)
-      timetableSource = `12306 浏览器态抓取（${date}）`
-    } catch (e) {
-      console.warn(`⚠ 真实时刻表抓取失败：${e.message}`)
-      console.warn('⚠ 降级为公开资料整理时刻表（已在 meta.js 标注）')
-      trains = curatedTimetables(stations)
+
+  // 优先级 1：queryTrainInfo 免 cookie 链（2026-11-26 验证，最稳）
+  console.log(`→ 主链路：queryTrainInfo 免 cookie 抓取（${date}）`)
+  try {
+    trains = await fetchTimetablesQTI(stations, date)
+    timetableSource = `12306 queryTrainInfo 抓取（${date} 发车日，免 cookie）`
+  } catch (e) {
+    console.warn(`⚠ queryTrainInfo 链路失败：${e.message}`)
+    // 优先级 2：浏览器态 leftTicket+czxx 链（2026-11-25 验证，需用户提供 cookies）
+    if (args.cookie) {
+      console.log(`→ 备用链路：浏览器态抓取（${date}）`)
+      try {
+        trains = await fetchTimetables12306(stations, args.cookie, date)
+        timetableSource = `12306 浏览器态抓取（${date}）`
+      } catch (e2) {
+        console.warn(`⚠ 浏览器态链路失败：${e2.message}`)
+      }
     }
-  } else {
+  }
+  // 优先级 3：已验证快照（jinghu-line.mjs，来源见 DATA_SOURCES）
+  if (!trains) {
+    console.warn('⚠ 降级为已验证快照时刻表（已在 meta.js 标注）')
     trains = curatedTimetables(stations)
   }
 

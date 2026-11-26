@@ -1,4 +1,4 @@
-// 由 scripts/fetch-railway-data.mjs 生成（2026-11-25）——请勿手改，重跑脚本更新
+// 由 scripts/fetch-railway-data.mjs 生成（2026-11-26）——请勿手改，重跑脚本更新
 // 京沪高铁本线车站（电报码来自 12306 实测；坐标为公开地理信息整理，WGS-84）
 
 export const stations = [

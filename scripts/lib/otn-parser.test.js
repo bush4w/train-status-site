@@ -1,5 +1,45 @@
 import { describe, it, expect } from 'vitest'
-import { isEncryptedResult, parseLeftTicketEntry, parseTrainStops } from './otn-parser.mjs'
+import {
+  isEncryptedResult,
+  parseLeftTicketEntry,
+  parseTrainStops,
+  parseTrainNameList,
+  matchTrainByName,
+} from './otn-parser.mjs'
+
+// getTrainName fixture：2026-11-26 真实响应格式（明文，全国 1.4 万+ 条）
+const NAME_LIST_FIXTURE = {
+  status: true,
+  data: [
+    { station_train_code: 'C1001(长春-延吉西)', train_no: '11000C10010F' },
+    { station_train_code: 'G1(北京南-上海虹桥)', train_no: '24000000G10L' },
+    { station_train_code: 'G5(北京-上海)', train_no: '24000000G50H' },
+    { station_train_code: '格式异常无括号', train_no: 'x' },
+  ],
+}
+
+describe('parseTrainNameList / matchTrainByName', () => {
+  it('解析车次目录：拆出车次号与起讫站，过滤畸形条目', () => {
+    const list = parseTrainNameList(NAME_LIST_FIXTURE)
+    expect(list).toHaveLength(3)
+    expect(list[0]).toEqual({ code: 'C1001', route: '长春-延吉西', train_no: '11000C10010F' })
+    expect(list[1]).toEqual({ code: 'G1', route: '北京南-上海虹桥', train_no: '24000000G10L' })
+  })
+
+  it('按车次号+起讫站精确匹配（区分同车次号不同区段）', () => {
+    const list = parseTrainNameList(NAME_LIST_FIXTURE)
+    expect(matchTrainByName(list, 'G1', '北京南', '上海虹桥')?.train_no).toBe('24000000G10L')
+    // G5 终到上海站（既有线），按虹桥匹配应落空——正是管道要防的幽灵车
+    expect(matchTrainByName(list, 'G5', '北京南', '上海虹桥')).toBeNull()
+    expect(matchTrainByName(list, 'G5', '北京', '上海')?.train_no).toBe('24000000G50H')
+    expect(matchTrainByName(list, 'G2', '北京南', '上海虹桥')).toBeNull()
+  })
+
+  it('异常输入返回空数组', () => {
+    expect(parseTrainNameList(null)).toEqual([])
+    expect(parseTrainNameList({ data: 'not-array' })).toEqual([])
+  })
+})
 
 // 明文条目 fixture：字段映射依据官方前端 cO 函数（2026-11-25 提取验证）
 // f[2]=train_no f[3]=车次 f[4]/f[5]=始发/终到码 f[8]/f[9]=发/到时刻 f[13]=乘车日期
