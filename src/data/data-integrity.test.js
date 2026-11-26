@@ -20,9 +20,10 @@ describe('M4 全国数据完整性', () => {
     const precise = stations.filter((s) => s.precise)
     expect(precise.length).toBeGreaterThanOrEqual(23)
     expect(stationsMap.VNP.name).toBe('北京南')
-    // 精确坐标可能来自人工整理或 OSM 实测（build-lines），断言近似值
-    expect(stationsMap.VNP.lat).toBeCloseTo(39.865, 2)
-    expect(stationsMap.VNP.lng).toBeCloseTo(116.379, 2)
+    // 精确坐标可能来自人工整理或 OSM 实测（站房节点，与站中心可差数百米）；
+    // 容差 0.02°≈2.2km：既能容纳 OSM/人工差异，又能挡住"城市级兜底"那种偏差
+    expect(Math.abs(stationsMap.VNP.lat - 39.865)).toBeLessThan(0.02)
+    expect(Math.abs(stationsMap.VNP.lng - 116.379)).toBeLessThan(0.02)
     expect(stationsMap.AOH.name).toBe('上海虹桥')
     expect(stationsMap.JGK.name).toBe('济南西')
     expect(stationsMap.UUH.name).toBe('徐州东')

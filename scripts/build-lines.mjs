@@ -44,11 +44,24 @@ function tileFiles(prefix) {
 function collectElements(prefix) {
   const files = tileFiles(prefix)
   const elements = []
+  let bad = 0
   for (const f of files) {
-    const j = loadJson(`${TILES_DIR}/${f}`)
-    elements.push(...(j.elements ?? []))
+    let j
+    try {
+      j = loadJson(`${TILES_DIR}/${f}`)
+    } catch {
+      bad++
+      console.warn(`  ⚠ 跳过损坏瓦片（非 JSON，可能是错误页残留）: ${f}`)
+      continue
+    }
+    if (!Array.isArray(j.elements)) {
+      bad++
+      console.warn(`  ⚠ 跳过无 elements 的瓦片: ${f}`)
+      continue
+    }
+    elements.push(...j.elements)
   }
-  console.log(`  · ${files.length} 个瓦片，共 ${elements.length} 元素`)
+  console.log(`  · ${files.length - bad}/${files.length} 个瓦片有效，共 ${elements.length} 元素`)
   return elements
 }
 
@@ -105,6 +118,10 @@ function main() {
   if (!existsSync(OSM_DIR)) throw new Error('缺少 .cache/osm/，请先运行 node scripts/fetch-osm-geom.mjs')
 
   buildStationCoords()
+  if (args['stations-only']) {
+    console.log('✓ --stations-only：仅更新站点坐标，跳过线路构建')
+    return
+  }
 
   const hsr = buildLines('hsr_', HSR_TOL, '高铁线路')
   const conv = buildLines('conv_', CONV_TOL, '普速干线')

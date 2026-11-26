@@ -13,7 +13,7 @@
 // 归属：数据 © OpenStreetMap contributors，ODbL 许可（生成数据中必须署名）。
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, statSync, openSync, readSync, closeSync, unlinkSync } from 'node:fs'
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -104,6 +104,10 @@ async function fetchTile(layer, size, lat, lon) {
       console.log(`✓ ${tileName(layer, size, lat, lon)} ${mb.toFixed(1)}MB @${host}`)
       return 'ok'
     }
+    // 清理坏响应残留（502 错误页等），防止污染缓存目录导致后续构建崩溃
+    try {
+      if (existsSync(outFile)) unlinkSync(outFile)
+    } catch { /* 忽略 */ }
     if (status === 400 || status === 422) {
       console.warn(`✗ ${layer} s${size} (${lat},${lon}) HTTP ${status} 查询错误 @${host}`)
       return 'badquery'
