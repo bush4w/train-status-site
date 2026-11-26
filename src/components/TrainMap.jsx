@@ -5,6 +5,7 @@ import { wgs84ToGcj02 } from '../lib/coord'
 import { trainTypeInfo } from '../lib/train-type'
 import { CORRIDORS } from '../lib/diagram'
 import { buildRailIndex, buildTrainPath, posAtKm, kmFromStatus, snapChord } from '../lib/snap'
+import { buildRouteGraph, routePair } from '../lib/route-graph'
 
 // 高德瓦片使用 GCJ-02，所有 WGS-84 坐标先转换再交给 Leaflet
 const gcj = (lat, lng) => wgs84ToGcj02(lat, lng)
@@ -264,6 +265,16 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
         // 索引与吸附路径
         const index = buildRailIndex(j)
         indexRef.current = index
+        // 路由图：绕行严重的线路（如西成高铁穿秦岭）弦线采样会失败 → 图上找真实路径
+        const graph = buildRouteGraph(j)
+        const routeCache = new Map()
+        const router = (a, b) => {
+          const key = `${a[0].toFixed(3)},${a[1].toFixed(3)}|${b[0].toFixed(3)},${b[1].toFixed(3)}`
+          if (routeCache.has(key)) return routeCache.get(key)
+          const r = routePair(graph, a, b)
+          routeCache.set(key, r)
+          return r
+        }
         const sm = stationsMapRef.current
         // 站对缓存跨车次复用
         const pairCache = new Map()
@@ -274,7 +285,7 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
           const end = Math.min(i + 120, trains.length)
           for (; i < end; i++) {
             const t = trains[i]
-            const p = buildTrainPath(t, sm, index, pairCache)
+            const p = buildTrainPath(t, sm, index, pairCache, router)
             if (p) pathsRef.current.set(t.no, p)
           }
           if (i < trains.length) setTimeout(chunk, 0)
@@ -292,7 +303,13 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
           for (let k = 0; k < sts.length - 1; k++) {
             const a = [sts[k].lat, sts[k].lng]
             const b = [sts[k + 1].lat, sts[k + 1].lng]
-            const seg = snapChord(a, b, index) || [a, b]
+            // 与列车路径同源：采样优先 → 路由图兜底（走廊高亮与列车轨迹一致）
+            const cacheKey = `${a[0].toFixed(3)},${a[1].toFixed(3)}|${b[0].toFixed(3)},${b[1].toFixed(3)}`
+            let seg = pairCache.get(cacheKey)
+            if (!seg) {
+              seg = snapChord(a, b, index) || router(a, b) || [a, b]
+              pairCache.set(cacheKey, seg)
+            }
             for (let q = pts.length ? 1 : 0; q < seg.length; q++) pts.push(seg[q])
           }
           const gj = toGcjLine(pts)
