@@ -187,6 +187,8 @@ export default function TrainMap({ trains, simMinutes, selectedNo, onSelect, fly
   }, [])
 
   // 绘制线位（普速在下、高铁在上）
+  // 性能：6500+ 条独立折线 = 6500 次 canvas stroke/重绘；
+  // 合并为 2 条多段折线（multi-polyline）后每次重绘仅 2 次 stroke
   useEffect(() => {
     if (!mapReady || !railLines || !mapRef.current) return
     const toGcjLine = (line) => {
@@ -198,12 +200,12 @@ export default function TrainMap({ trains, simMinutes, selectedNo, onSelect, fly
       return out
     }
     const layer = L.layerGroup().addTo(mapRef.current)
-    for (const line of railLines.conv ?? []) {
-      L.polyline(toGcjLine(line), { color: '#8a8f98', weight: 1, opacity: 0.55, interactive: false }).addTo(layer)
+    const drawGroup = (key, style) => {
+      const lines = (railLines[key] ?? []).map(toGcjLine).filter((l) => l.length >= 2)
+      if (lines.length) L.polyline(lines, { ...style, interactive: false }).addTo(layer)
     }
-    for (const line of railLines.hsr ?? []) {
-      L.polyline(toGcjLine(line), { color: '#4a6fa5', weight: 1.8, opacity: 0.75, interactive: false }).addTo(layer)
-    }
+    drawGroup('conv', { color: '#8a8f98', weight: 1, opacity: 0.55 })
+    drawGroup('hsr', { color: '#4a6fa5', weight: 1.8, opacity: 0.75 })
     return () => {
       mapRef.current?.removeLayer(layer)
     }
