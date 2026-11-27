@@ -953,7 +953,7 @@ button {
 .county-geo:disabled { opacity: 0.5; cursor: default; }
 .county-hint { margin-top: 5px; font-size: 10px; line-height: 1.5; color: #999; }
 .county-arrivals { margin-top: 8px; max-height: 260px; overflow-y: auto; }
-.arrival-row { display: grid; grid-template-columns: 50px 1fr 12px 1fr 38px 42px; align-items: center; gap: 4px; padding: 4px 0; border-bottom: 1px dashed #eee; font-size: 11px; }
+.arrival-row { display: grid; grid-template-columns: 62px 1fr 12px 1fr 38px 42px; align-items: center; gap: 4px; padding: 4px 0; border-bottom: 1px dashed #eee; font-size: 11px; }
 .arrival-no { text-align: center; color: #fff; border-radius: 4px; padding: 1px 3px; font-weight: 700; }
 .arrival-time { font-variant-numeric: tabular-nums; color: #333; }
 .arrival-time i { display: block; font-style: normal; font-size: 10px; color: #999; }
@@ -962,3 +962,11 @@ button {
 .arrival-status { text-align: right; font-weight: 600; }
 .county-muted { font-size: 10px; line-height: 1.6; color: #999; }
 .county-empty { font-size: 11px; line-height: 1.6; color: #999; }
+
+.badge-tour { display: inline-block; margin-left: 3px; padding: 0 3px; font-size: 9px; font-style: normal; border-radius: 3px; background: rgba(255, 255, 255, 0.28); vertical-align: 1px; }
+.transfer-heading { margin-top: 10px; }
+.transfer-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.transfer { border: 1px solid #eee; border-radius: 8px; padding: 5px 6px; background: #fafafa; }
+.transfer-line { display: grid; grid-template-columns: 62px 1fr 12px 1fr 46px; align-items: center; gap: 4px; font-size: 11px; }
+.transfer-line + .transfer-line { margin-top: 2px; padding-top: 3px; border-top: 1px dashed #eee; }
+.transfer-wait { text-align: right; color: #b9770e; font-size: 10px; }
