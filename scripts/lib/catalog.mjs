@@ -57,6 +57,30 @@ export function groupByTrainNo(entries) {
 /**
  * 组合并集的统计（车次号口径 + train_no 口径）
  */
+/**
+ * 选「date 之前最近一个目录日期」作为基线（默认 7 天内）。
+ * 背景：凌晨抓当天目录时，getTrainName 常只返回单次响应级别的条目（约 9.8k train_no），
+ *       而最近一个完整日（含多份样本并集）可达 12.5k；用基线补齐候选，避免快照缩水。
+ * @param {string[]} dates 磁盘上出现过的目录日期（YYYY-MM-DD，可重复）
+ * @param {string} date 目标日期
+ * @param {number} maxDays 最大回溯天数
+ * @returns {string|null}
+ */
+export function pickBaselineDate(dates, date, maxDays = 7) {
+  const target = Date.parse(`${date}T00:00:00Z`)
+  if (Number.isNaN(target)) return null
+  let best = null
+  for (const d of new Set(dates ?? [])) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d >= date) continue
+    const t = Date.parse(`${d}T00:00:00Z`)
+    if (Number.isNaN(t)) continue
+    const diff = (target - t) / 86400000
+    if (diff <= 0 || diff > maxDays) continue
+    if (!best || d > best) best = d
+  }
+  return best
+}
+
 export function catalogStats(groups) {
   const byLetter = {}
   let services = 0

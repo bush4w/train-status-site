@@ -30,7 +30,7 @@ import { JINGHU_STATIONS, JINGHU_TRAINS, DATA_SOURCES } from './data/jinghu-line
 import { CORRIDORS } from './data/corridors.mjs'
 import { geocodeStations, jitter } from './lib/geocode.mjs'
 import { shuffled } from './lib/schedule.mjs'
-import { mergeCatalogEntries, groupByTrainNo, catalogStats } from './lib/catalog.mjs'
+import { mergeCatalogEntries, groupByTrainNo, catalogStats, pickBaselineDate } from './lib/catalog.mjs'
 import { acquireLock, releaseLock, isLocked } from './lib/lock.mjs'
 
 const UA =
@@ -73,7 +73,16 @@ function writeFetchStatus(patch = {}) {
     mkdirSync('public/live', { recursive: true })
     const tmp = `${FETCH_STATUS_FILE}.tmp`
     writeFileSync(tmp, JSON.stringify(FETCH_STATUS))
-    renameSync(tmp, FETCH_STATUS_FILE)
+    // Windows 上浏览器轮询/杀毒可能短暂占用目标文件，rename 会抛 EPERM；重试后直接覆盖
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        renameSync(tmp, FETCH_STATUS_FILE)
+        return
+      } catch {
+        /* 重试 */
+      }
+    }
+    writeFileSync(FETCH_STATUS_FILE, JSON.stringify(FETCH_STATUS))
   } catch {
     /* 状态文件失败不影响抓取 */
   }
@@ -207,18 +216,52 @@ async function loadCatalogUnion(date, samples = 3) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const json = await res.json()
         entries.push(...parseTrainNameList(json))
+        // 当日样本落盘：同日多份响应互补；次日凌晨抓取时也能作为基线
+        try {
+          const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '')
+          writeFileSync(`${CACHE_DIR}/gettrainname_${date}_${stamp}_${i}.json`, JSON.stringify(json))
+        } catch {
+          /* 缓存失败不影响主流程 */
+        }
       } catch (e) {
         console.warn(`⚠ 目录在线抓取第 ${i + 1} 次失败：${e.message}`)
       }
       if (i < samples - 1) await politeDelay()
     }
   }
+
+  // 基线：最近一个完整日的目录。凌晨抓当天时单次目录只有 ~9.8k train_no，
+  // 直接采信会让快照从 12.5k 缩水；用基线补齐候选，时刻表多为 7 天缓存复用。
+  let baselineDate = null
+  let baselineEntries = 0
+  if (!args['no-baseline'] && existsSync(CACHE_DIR)) {
+    const dates = []
+    for (const f of readdirSync(CACHE_DIR)) {
+      const m = f.match(/^gettrainname_(\d{4}-\d{2}-\d{2})/)
+      if (m) dates.push(m[1])
+    }
+    baselineDate = pickBaselineDate(dates, date, Number(args['baseline-days'] ?? 7))
+    if (baselineDate) {
+      for (const f of readdirSync(CACHE_DIR).filter((x) => x.startsWith(`gettrainname_${baselineDate}`))) {
+        try {
+          const list = parseTrainNameList(JSON.parse(readFileSync(`${CACHE_DIR}/${f}`, 'utf8')))
+          baselineEntries += list.length
+          entries.push(...list)
+        } catch {
+          /* 忽略损坏缓存 */
+        }
+      }
+    }
+  }
+
   const merged = mergeCatalogEntries(entries)
   if (merged.length < 1000) throw new Error(`目录并集解析异常：仅 ${merged.length} 条`)
   const groups = groupByTrainNo(merged)
   const stats = catalogStats(groups)
+  stats.baselineDate = baselineDate
+  stats.baselineEntries = baselineEntries
   console.log(
-    `✓ 车次目录并集：缓存 ${files.length} 份 / ${fromCache} 条 + 在线 ${args.offline ? 0 : samples} 次 → 唯一班次 ${merged.length}，列车 ${stats.trainNo}，班次 ${stats.services}（动车 ${stats.emuServices} / 普速 ${stats.convServices}）`,
+    `✓ 车次目录并集：当日缓存 ${files.length} 份 / ${fromCache} 条 + 在线 ${args.offline ? 0 : samples} 次 + 基线 ${baselineDate ?? '无'}（${baselineEntries} 条）→ 唯一班次 ${merged.length}，列车 ${stats.trainNo}，班次 ${stats.services}（动车 ${stats.emuServices} / 普速 ${stats.convServices}）`,
   )
   return { entries: merged, groups, stats }
 }

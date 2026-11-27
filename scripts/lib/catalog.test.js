@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeCatalogEntries, groupByTrainNo, catalogStats, letterOf, isEmuLetter } from './catalog.mjs'
+import { mergeCatalogEntries, groupByTrainNo, catalogStats, letterOf, isEmuLetter, pickBaselineDate } from './catalog.mjs'
 
 describe('catalog 目录并集', () => {
   it('按 (code, train_no) 去重，保留同一 train_no 的不同车次号', () => {
@@ -38,6 +38,13 @@ describe('catalog 目录并集', () => {
     expect(s.emuServices).toBe(3)
     expect(s.convServices).toBe(1)
     expect(s.byLetter.C).toBe(2)
+  })
+
+  it('基线日期：取之前最近一天，且不超过回溯窗口', () => {
+    expect(pickBaselineDate(['2026-11-25', '2026-11-27', '2026-11-28'], '2026-11-28')).toBe('2026-11-27')
+    expect(pickBaselineDate(['2026-11-20'], '2026-11-28', 7)).toBe(null)
+    expect(pickBaselineDate(['2026-11-21'], '2026-11-28', 7)).toBe('2026-11-21')
+    expect(pickBaselineDate(['2026-11-28'], '2026-11-28')).toBe(null)
   })
 
   it('字头解析', () => {
