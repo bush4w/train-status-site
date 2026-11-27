@@ -23,6 +23,7 @@
 | 线路运行图 | 20 条主要客运走廊的时间-距离图：斜线=运行、水平段=停站、交点=会让/越行、红线=当前时刻；打开时自动定位到当前时刻 |
 | 缩放分级 | 远景只显示大站快车与枢纽站，放大逐步放开快车、动车、普速与全部车站（同屏上限 800） |
 | 线路图层 | 全部 / 高铁 / 普速 三种视图，同步过滤底图线路、列车、图例与晚点榜单 |
+| 区县与直达 | 缩放 7 级显示区县边界（5–6 级为地市），点击区县查看收录车站与从起点**直达**的车次（发到时刻、历时、跨日、晚点态）；起点可切换附近枢纽站或使用浏览器定位 |
 | 车型剪影 | 按新版车次编排规定区分车型：动车组=流线胶囊，普速=机车轮廓；颜色区分类别 |
 | 全量目录 | 启动时检查数据日期/完整度；过期或不足自动后台全量抓取（含普速、跨零点），不阻塞页面 |
 | 数据自动刷新 | 定时任务以 15±8 分钟随机间隔抽样晚点；前端 45–75 秒随机轮询，页面无需重建即可更新 |
@@ -78,6 +79,7 @@ npm test             # 全部单测（算法 + 数据完整性）
 | `npm run fetch:all` | 全量抓取：目录并集 + 所有车次（含普速/跨零点），可续跑 |
 | `npm run data:ensure` | 手动执行启动前数据检查（必要时后台拉起全量抓取） |
 | `npm run fetch:jinghu` | 京沪高铁高精模式（少量标杆车，快速验证） |
+| `npm run build:counties` | 抓取/简化区县边界并把车站归属到区县（约 370 请求，可续跑） |
 | `npm run refresh` | 常驻自动刷新：15±8 分钟随机间隔重跑管道 |
 | `npm run refresh:once` | 只刷新一轮 |
 
@@ -164,7 +166,7 @@ node scripts/fetch-osm-gaps.mjs --dry-run   # 先看要补哪些网格
 node scripts/fetch-osm-gaps.mjs             # 抓取（Overpass 忙时自动退避重试）
 ```
 
-推荐顺序：`npm run fetch`（生成车站表缓存）→ OSM 抓取 → `build-lines.mjs` → 再跑一次 `npm run fetch` 采用 OSM 精确站点坐标。只想更新车站坐标时：`build-lines.mjs --stations-only` → `apply-station-coords.mjs`。线位有缺口时再跑 `fetch-osm-gaps.mjs` → `build-lines.mjs`。
+推荐顺序：`npm run fetch`（生成车站表缓存）→ OSM 抓取 → `build-lines.mjs` → 再跑一次 `npm run fetch` 采用 OSM 精确站点坐标。区县与直达另跑 `npm run build:counties`（边界 + 车站归属）。只想更新车站坐标时：`build-lines.mjs --stations-only` → `apply-station-coords.mjs`。线位有缺口时再跑 `fetch-osm-gaps.mjs` → `build-lines.mjs`。
 
 ### 3. 数据流
 
@@ -192,6 +194,7 @@ OSM Overpass ─▶ fetch-osm-geom.mjs ─▶ build-lines.mjs ─▶ public/data
 - **线位吸附** `src/lib/snap.js`：站对弦线按长度自适应采样（约每 6 km 一点）→ 逐环扩窗投影到最近的铁路线段（同线优先、同线补点防切弯）→ 去回访环 → 形成路径；停站用站坐标收尾（站台离主线超过 1.2 km 时沿用线位点）→ 运行时按里程二分插值取坐标。吸附失败先拉大半径重试，仍无几何的区间标记为 `degraded`，前端画虚线。
 - **绕行兜底** `src/lib/route-graph.js`：吸附失败或跳线过大时，在线位节点图上做多源 Dijkstra（两端各取若干主线候选节点），求真实路径并校验绕行比例。长直边按 2 km 插节点，避免简化后的长边附近没有图节点、车站吸附不上。
 - **运行图** `src/lib/diagram.js`：走廊视角——车次与走廊有序匹配（下行/上行），以公里标为纵轴、分钟为横轴生成折线；车次视角——`buildTrainJourney` 按该车全部停站铺纵轴，不依赖走廊定义，匹配到的走廊只用于区段线路名标注。
+- **区县与直达** `scripts/build-counties.mjs` + `src/lib/access.js`：区县边界取自公开行政区划数据（GCJ-02），Douglas-Peucker 简化后按视野 LOD 渲染；构建期用点在多边形内把车站落到区县（GCJ 归属命中 99.8%，失败率过高时自动回退 WGS 复测）；直达查询在本地时刻表里找「起点城市任一站 → 目标区县任一站」的最晚可上车站对，按绝对分钟处理跨日。
 - **车型系统** `src/lib/train-type.js`：按新版《列车车次编排规定》解析字头与号段，输出颜色、形状与速度等级。
 - **坐标转换** `src/lib/coord.js`：数据统一 WGS-84，渲染前转 GCJ-02 以对齐高德瓦片。
 
@@ -207,7 +210,8 @@ OSM Overpass ─▶ fetch-osm-geom.mjs ─▶ build-lines.mjs ─▶ public/data
 │  │  ├─ trains.json        # 车次（车次号 / aliases / 起讫 / 内部编号 / 跨日 / 经停时刻表）
 │  │  ├─ status.json        # 数据日期 / 完整度 / 规模（启动检查用）
 │  │  ├─ fetch-report.json  # 全量抓取报告（跳过原因 / 未定位站名）
-│  │  └─ lines.json         # OSM 铁路线位（高铁 hsr + 普速 conv）
+│  │  ├─ lines.json         # OSM 铁路线位（高铁 hsr + 普速 conv）
+│  │  └─ counties.json      # 地市/区县边界（简化）+ 区县内车站码（M6a）
 │  └─ live/
 │     ├─ delays.json        # 正晚点抽样快照（定时刷新）
 │     └─ fetch-status.json  # 全量抓取进度（前端顶部进度条）
@@ -215,6 +219,7 @@ OSM Overpass ─▶ fetch-osm-geom.mjs ─▶ build-lines.mjs ─▶ public/data
 │  ├─ fetch-railway-data.mjs  # 12306 车站 / 车次 / 时刻表 / 正晚点管道（--full 全量）
 │  ├─ ensure-data.mjs         # 启动前检查；必要时后台拉起全量抓取
 │  ├─ fetch-osm-geom.mjs      # Overpass 瓦片化线位抓取
+│  ├─ build-counties.mjs      # 区县边界抓取/简化 + 车站归属
 │  ├─ fetch-osm-gaps.mjs      # 缺口补片：按直线兜底的站对补抓线位网格
 │  ├─ build-lines.mjs         # 线位串联、拆折返、简化与车站坐标匹配（含 --stations-only）
 │  ├─ apply-station-coords.mjs # 把 OSM 站坐标同步进 stations.json（不重跑抓取）
@@ -241,6 +246,7 @@ OSM Overpass ─▶ fetch-osm-geom.mjs ─▶ build-lines.mjs ─▶ public/data
 | `status.json` | `dataDate` 数据日期、`generatedAt`、`complete`、`counts`（车站/车次/班次） |
 | `fetch-report.json` | 全量抓取报告：目录规模、入库车次/班次、跳过原因、未定位站名、缓存命中/在线抓取数 |
 | `lines.json` | `hsr` 与 `conv` 两组 `[[lat,lng],...]` 折线（已简化；高铁 way 不再重复进普速层，串联产生的折返线会被拆开），以及 20 条走廊的构建期预计算线位 `corridors`；含 OSM 署名、容差与 `stats`（跨层去重 / 拆折返条数） |
+| `counties.json` | 地市 `cities[]` / 区县 `counties[]`：`code` 行政区划码、`name`、`city`/`province`、`center`、`polys`（外环点列，GCJ-02，已简化）与 `stations`（按点面归属的车站电报码）；`stationsAssigned/Total` 记录归属覆盖率 |
 | `delays.json` | `delayAsOf` 抽样时间、`sampled` 本轮实测车次列表、`delays` 实测车次 → 晚点分钟（不含未抽样车次） |
 | `fetch-status.json` | 全量抓取进度（`running`/`phase`/`done`/`total`），前端顶部进度条轮询 |
 
@@ -256,6 +262,7 @@ OSM Overpass ─▶ fetch-osm-geom.mjs ─▶ build-lines.mjs ─▶ public/data
 - **数据来源**：
   - 车站电报码、车次目录、时刻表、正晚点：12306（非官方接口）
   - 铁路线位与部分车站坐标：© OpenStreetMap contributors，ODbL 许可
+  - 区县行政区划边界：阿里云 DataV.GeoAtlas（公开数据，仅示意）
   - 底图瓦片：高德地图
   - 其余城市级坐标：公开地理信息整理
 
@@ -271,6 +278,10 @@ OSM Overpass ─▶ fetch-osm-geom.mjs ─▶ build-lines.mjs ─▶ public/data
 - **无后端**：所有数据在浏览器本地计算，不做服务端推送，也不做视野级按需加载。
 - **运行图跨日**：走廊运行图横轴固定 0–24h，跨零点车只画当日段；车次全程运行图按该车自身时间窗铺轴，跨日会扩展到 24h 以后。
 - **线位质量**：取决于 OSM 数据完整度，个别区段可能缺失或与实际走向有偏差；缺几何的区间在选中车次路径上以灰色虚线标出。
+- **区县边界**：公开行政区划数据，仅作示意、不具法律效力；直辖市按区参与「地市/区县」两级展示，个别省直辖县级单位会以单列条目出现。
+- **直达覆盖**：只覆盖已收录车次（12,558 趟）；目标区县无车站或 36 小时内无直达时会如实给出空状态，中转建议属 M7。
+- **起点**：默认取全国视图中心最近的大枢纽站（西安北），不随地图移动；可手动切换区县附近枢纽或使用浏览器定位（定位仅本地计算，不上传）。
+- **区县内容**：热门内容与本地景点（M6b）尚未接入整理数据，面板只展示时刻表可推导的信息。
 
 ## 路线图
 
@@ -280,7 +291,8 @@ OSM Overpass ─▶ fetch-osm-geom.mjs ─▶ build-lines.mjs ─▶ public/data
 - [ ] 前一日出发、当日在途的多日实例模型
 - [x] 千车级性能基准与渲染优化（全量 12.5k 趟实测；吸附路径改时间片构建，视野/等级优先）
 - [x] 时间轴跨日回放（0–48h，含次日）
-- [ ] 区县图层与「从当前地点铁路可达」查询
+- [x] 区县图层与「从当前地点铁路可达」查询（M6a：2,874 区县 / 车站归属 99.8% / 直达车次）
+- [ ] 区县热门内容与本地景点（M6b，需整理数据源）
 - [ ] 特殊班次（旅游专列等）标识
 - [ ] 暗色主题
 
