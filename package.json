@@ -4,13 +4,17 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/ensure-data.mjs",
     "dev": "vite",
-    "build": "vite build",
+    "prepreview": "node scripts/ensure-data.mjs",
     "preview": "vite preview",
+    "build": "vite build",
     "test": "vitest run",
+    "data:ensure": "node scripts/ensure-data.mjs",
     "refresh": "node scripts/auto-refresh.mjs",
     "refresh:once": "node scripts/auto-refresh.mjs --once",
     "fetch": "node scripts/fetch-railway-data.mjs",
+    "fetch:all": "node scripts/fetch-railway-data.mjs --full",
     "fetch:jinghu": "node scripts/fetch-railway-data.mjs --scope=jinghu"
   },
   "dependencies": {

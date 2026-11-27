@@ -9,6 +9,7 @@
 //   node scripts/fetch-osm-geom.mjs --no-conventional  # 只抓 stations + hsr
 //   node scripts/fetch-osm-geom.mjs --layers=hsr       # 只抓指定层（逗号分隔）
 //   --proxy=http://127.0.0.1:10808 --max-wait-min=150
+//   --proxy=direct --layers=stations   # 直连补抓（无代理时）
 //
 // 归属：数据 © OpenStreetMap contributors，ODbL 许可（生成数据中必须署名）。
 
@@ -21,14 +22,19 @@ const args = Object.fromEntries(
     return m ? [m[1], m[2] ?? true] : [a, true]
   }),
 )
-const PROXY = args.proxy || 'http://127.0.0.1:10808'
+// --proxy=direct 时不走代理（Overpass 可直连但容量波动较大）
+const PROXY = args.proxy === 'direct' ? '' : args.proxy || 'http://127.0.0.1:10808'
 const MAX_WAIT_MIN = Number(args['max-wait-min'] ?? 150)
 const OUT_DIR = '.cache/osm/tiles'
 const UA = 'train-status-site/1.0 (personal learning project; low-frequency tiled extraction)'
 
-// 实测（2026-11-26 经本地代理）：主站可用但间歇 502（容量波动）；
-// kumi.systems / private.coffee 不可达，osm.ch 数据为空，mail.ru 504 —— 只保留主站，靠退避重试
-const MIRRORS = ['https://overpass-api.de/api/interpreter']
+// 实测（2026-11-26/27）：主站可用但间歇 502/超时；
+// maps.mail.ru 镜像在 2026-11-27 补抓时可用；kumi.systems / private.coffee 不可达。
+// 重试时轮转镜像，主站失败后走 mail.ru。
+const MIRRORS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+]
 
 // 中国范围（含中老铁路境外段）：lat 17.5–54.5，lon 73–136
 const BBOX = { s: 17.5, n: 54.5, w: 73, e: 136 }
@@ -67,6 +73,23 @@ function validJsonFile(f) {
   }
 }
 
+// 续跑优化：父瓦片如果已有任意子瓦片（说明上次已细分），直接下钻到子瓦片，
+// 不再重试父级查询，避免每次续跑都卡在同一个 502 父瓦片上。
+function hasChildTile(layer, lat, lon, size) {
+  if (size <= MIN_TILE) return false
+  const h = size / 2
+  const kids = [
+    [lat, lon],
+    [lat, lon + h],
+    [lat + h, lon],
+    [lat + h, lon + h],
+  ]
+  return kids.some(([a, b]) => {
+    if (validJsonFile(`${OUT_DIR}/${tileName(layer, h, a, b)}`)) return true
+    return hasChildTile(layer, a, b, h)
+  })
+}
+
 // 单瓦片查询：镜像轮转 + 递增退避；返回 'ok' | 'retryable' | 'badquery'
 async function fetchTile(layer, size, lat, lon) {
   const outFile = `${OUT_DIR}/${tileName(layer, size, lat, lon)}`
@@ -75,17 +98,19 @@ async function fetchTile(layer, size, lat, lon) {
   const q = LAYERS[layer](bbox)
   const timeout = size >= 6 ? 300 : size >= 3 ? 240 : 180
   const plan = [{ w: 0 }, { w: 20 }, { w: 60 }, { w: 120 }, { w: 240 }] // 主站容量波动：递增退避
-  for (const step of plan) {
+  for (let stepIdx = 0; stepIdx < plan.length; stepIdx++) {
+    const step = plan[stepIdx]
     if (step.w) await sleep(step.w * 1000)
-    const mirror = MIRRORS[0]
+    const mirror = MIRRORS[Math.min(stepIdx, MIRRORS.length - 1)]
     const host = new URL(mirror).host
+    const proxyArgs = PROXY ? ['-x', PROXY] : []
     let status = 0
     try {
       status = Number(
         execFileSync(
           'curl',
           [
-            '-s', '-x', PROXY,
+            '-s', ...proxyArgs,
             '--max-time', String(timeout + 60),
             '-A', UA,
             '-X', 'POST', mirror,
@@ -135,6 +160,16 @@ async function fetchLayer(layer, deadline) {
       return { done, failed, incomplete: true }
     }
     const t = queue.shift()
+    if (t.size > MIN_TILE && hasChildTile(layer, t.lat, t.lon, t.size)) {
+      const h = t.size / 2
+      queue.unshift(
+        { size: h, lat: t.lat, lon: t.lon },
+        { size: h, lat: t.lat, lon: +(t.lon + h).toFixed(2) },
+        { size: h, lat: +(t.lat + h).toFixed(2), lon: t.lon },
+        { size: h, lat: +(t.lat + h).toFixed(2), lon: +(t.lon + h).toFixed(2) },
+      )
+      continue
+    }
     const r = await fetchTile(layer, t.size, t.lat, t.lon)
     if (r === 'ok' || r === 'cached') {
       done++

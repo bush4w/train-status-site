@@ -94,18 +94,33 @@ export function parseDelayMessage(json) {
  * 注意：两接口对在途列车均只返回**图定时刻**（实测 N3/G9 在途对比零差异，2026-11-26），
  * 不含实际到发/正晚点字段；OT 字段实测恒为空数组。
  * @param {object} json
- * @returns {{name:string, arr:string|null, dep:string|null, no:string}[]}
+ * @returns {{name:string, arr:string|null, dep:string|null, no:string, arrDay:number|null, depDay:number|null}[]}
  */
 export function parseTrainStops(json) {
   const rows = json?.data?.data
   if (!Array.isArray(rows)) return []
   const t = (v) => (v && v !== '----' && /^\d{2}:\d{2}$/.test(v) ? v : null)
-  const stops = rows.map((r) => ({
-    name: r.station_name,
-    arr: t(r.arrive_time),
-    dep: t(r.start_time),
-    no: String(r.station_no ?? ''),
-  }))
-  if (stops.length) stops[stops.length - 1].dep = null
+  const toMin = (hm) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5))
+  const dayNum = (v) => {
+    const n = Number(v)
+    return Number.isFinite(n) && n >= 0 ? n : 0
+  }
+  const stops = rows.map((r, i) => {
+    const arr = t(r.arrive_time)
+    const dep = t(r.start_time)
+    const arrDay = arr == null ? null : dayNum(r.arrive_day_diff)
+    // 无 start_day_diff 字段：发车日默认与到达日同日；
+    // 若发车时刻早于到达时刻（如 23:50 到、00:10 发），视为次日。
+    let depDay = null
+    if (dep != null) {
+      if (i === 0 || arr == null || arrDay == null) depDay = 0
+      else depDay = arrDay + (toMin(dep) < toMin(arr) ? 1 : 0)
+    }
+    return { name: r.station_name, arr, dep, no: String(r.station_no ?? ''), arrDay, depDay }
+  })
+  if (stops.length) {
+    stops[stops.length - 1].dep = null
+    stops[stops.length - 1].depDay = null
+  }
   return stops
 }

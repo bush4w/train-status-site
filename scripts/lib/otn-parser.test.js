@@ -115,9 +115,28 @@ describe('parseTrainStops', () => {
     }
     const stops = parseTrainStops(json)
     expect(stops).toHaveLength(3)
-    expect(stops[0]).toEqual({ name: '北京南', arr: null, dep: '09:00', no: '01' })
-    expect(stops[1]).toEqual({ name: '济南西', arr: '10:22', dep: '10:24', no: '02' })
-    expect(stops[2]).toEqual({ name: '上海虹桥', arr: '13:28', dep: null, no: '04' })
+    expect(stops[0]).toMatchObject({ name: '北京南', arr: null, dep: '09:00', no: '01', arrDay: null, depDay: 0 })
+    expect(stops[1]).toMatchObject({ name: '济南西', arr: '10:22', dep: '10:24', no: '02', arrDay: 0, depDay: 0 })
+    expect(stops[2]).toMatchObject({ name: '上海虹桥', arr: '13:28', dep: null, no: '04', arrDay: 0, depDay: null })
+  })
+
+  it('跨零点：arrive_day_diff 解析为 arrDay，发车早于到达时 depDay 进 1', () => {
+    const json = {
+      data: {
+        data: [
+          { station_name: '哈尔滨', arrive_time: '----', start_time: '21:12', arrive_day_diff: '0', station_no: '01' },
+          { station_name: '沈阳北', arrive_time: '23:50', start_time: '00:10', arrive_day_diff: '0', station_no: '02' },
+          { station_name: '北京', arrive_time: '07:29', start_time: '----', arrive_day_diff: '1', station_no: '03' },
+        ],
+      },
+    }
+    const stops = parseTrainStops(json)
+    expect(stops[0].arrDay).toBeNull()
+    expect(stops[0].depDay).toBe(0)
+    expect(stops[1].arrDay).toBe(0)
+    expect(stops[1].depDay).toBe(1)
+    expect(stops[2].arrDay).toBe(1)
+    expect(stops[2].depDay).toBeNull()
   })
   it('终到站 start_time 与 arrive_time 相同时归一为 null（2026-11-25 实测 G1 格式）', () => {
     const json = {

@@ -3,6 +3,10 @@
 //   var station_names ='@bjb|北京北|VAP|beijingbei|bjb|0|0357|北京|||@...';
 // 字段：拼音缩写|车站名|电报码|全拼|拼音首字母|序号|路局码|城市|||
 
+import { normalizeStationName } from './station-name.mjs'
+
+export { normalizeStationName }
+
 /**
  * 解析 station_name.js 文本 → 车站对象数组
  * 注意：把响应当纯文本解析，绝不 eval（下载内容不可信）
@@ -28,9 +32,9 @@ export function parseStationNameJs(text) {
     .filter((s) => s.name && /^[A-Z]{3}$/.test(s.code))
 }
 
-/** 按站名索引（合并坐标/时刻表用） */
+/** 按规范化站名索引（合并坐标/时刻表用；容忍目录/时刻表里的空格） */
 export function indexByName(stations) {
-  return Object.fromEntries(stations.map((s) => [s.name, s]))
+  return Object.fromEntries(stations.map((s) => [normalizeStationName(s.name), s]))
 }
 
 /** 按电报码索引 */

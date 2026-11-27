@@ -13,6 +13,7 @@
 import { spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { nextIntervalMs, preDelayMs } from './lib/schedule.mjs'
+import { isLocked } from './lib/lock.mjs'
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -52,8 +53,13 @@ async function main() {
     const pre = preDelayMs(PRE_DELAY_MAX_SEC)
     log(`轮前抖动 ${Math.round(pre / 1000)}s`)
     await sleep(pre)
-    const ok = await runPipeline()
-    log(ok ? '本轮刷新完成 ✓' : '本轮刷新失败 ✗（保留上一轮数据，下轮重试）')
+    const lockState = isLocked()
+    if (lockState.running) {
+      log(`全量抓取进行中（pid ${lockState.lock.pid}），跳过本轮，避免覆盖主数据`)
+    } else {
+      const ok = await runPipeline()
+      log(ok ? '本轮刷新完成 ✓' : '本轮刷新失败 ✗（保留上一轮数据，下轮重试）')
+    }
     if (once) break
     const wait = nextIntervalMs(BASE_MIN, JITTER_MIN)
     log(`下轮约 ${Math.round(wait / 60000)} 分钟后`)

@@ -2,11 +2,9 @@
 // OSM 名称形态：北京南站 / 北京南 / Beijing South Railway Station / name:zh=北京南站
 // 匹配策略：中文名规范化（去尾缀"站"）→ 精确匹配 → 多候选/单候选都用城市级参考坐标做距离消歧
 
-/** 规范化站名：去空白、去尾缀"站" */
-export function normalizeStationName(name) {
-  if (!name) return ''
-  return String(name).trim().replace(/\s+/g, '').replace(/站$/, '')
-}
+import { normalizeStationName } from './station-name.mjs'
+
+export { normalizeStationName }
 
 export function isLatinName(name) {
   return /^[\x20-\x7E]+$/.test(String(name || ''))
