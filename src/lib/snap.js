@@ -177,25 +177,127 @@ export function distKm(a, b) {
   return Math.hypot((b[1] - a[1]) * cosLat, b[0] - a[0]) * KM_PER_DEG
 }
 
+const LOOP_TOL_KM = 0.1 // 回访判定半径：回到此前的点
+const LOOP_MIN_KM = 0.5 // 已走过的距离下限，太短的小弯曲不算回环
+const STATION_SNAP_KM = 1.2 // 站台离主线超过此距离时不再强插站坐标，避免路径在站场来回折
+
+/**
+ * 去掉路径里的「回访环」：离开后又回到 100 m 内的同一点，
+ * 说明跟进了尽头线/折返线，会把列车画成原路返回。
+ * 纯函数，保留回访点本身（车站常在尽头线端头）。
+ */
+export function removeLoops(pts, { tolKm = LOOP_TOL_KM, minKm = LOOP_MIN_KM } = {}) {
+  if (!Array.isArray(pts) || pts.length < 4) return pts ? [...pts] : []
+  const out = []
+  const cum = []
+  let total = 0
+  for (const p of pts) {
+    const last = out[out.length - 1]
+    if (last && last[0] === p[0] && last[1] === p[1]) continue
+    const step = last ? distKm(last, p) : 0
+    let cut = -1
+    for (let j = cum.length - 1; j >= 0; j--) {
+      if (total + step - cum[j] < minKm) break
+      if (distKm(out[j], p) <= tolKm) {
+        cut = j
+        break
+      }
+    }
+    if (cut >= 0) {
+      const tail = out[cut]
+      out.length = cut + 1
+      cum.length = cut + 1
+      total = cum[cut]
+      if (tail[0] === p[0] && tail[1] === p[1]) continue // 正好回到原点，不再重复
+      total += distKm(tail, p)
+      out.push(p)
+      cum.push(total)
+      continue
+    }
+    total += step
+    out.push(p)
+    cum.push(total)
+  }
+  return out
+}
+
+/**
+ * 整条路径去环：跨站界的折返（上一段从站前绕出、下一段又绕回）也能剪掉。
+ * 与 removeLoops 的区别是带停站标记，剪掉的区间里含停站点就不剪。
+ * @param {number[][]} pts
+ * @param {number[]} tags 每个点的停站序号（0 = 普通点）
+ */
+function trimPathLoops(pts, tags, { tolKm = LOOP_TOL_KM, minKm = LOOP_MIN_KM } = {}) {
+  const out = []
+  const outTags = []
+  const cum = []
+  let total = 0
+  for (let k = 0; k < pts.length; k++) {
+    const p = pts[k]
+    const tag = tags[k]
+    const last = out[out.length - 1]
+    if (last && last[0] === p[0] && last[1] === p[1]) {
+      if (tag > 0) outTags[outTags.length - 1] = tag
+      continue
+    }
+    const step = last ? distKm(last, p) : 0
+    let cut = -1
+    for (let j = cum.length - 1; j >= 0; j--) {
+      if (total + step - cum[j] < minKm) break
+      if (distKm(out[j], p) <= tolKm) {
+        cut = j
+        break
+      }
+    }
+    if (cut >= 0) {
+      let hasStop = tag > 0
+      for (let j = cut + 1; !hasStop && j < outTags.length; j++) hasStop = outTags[j] > 0
+      if (!hasStop) {
+        const tail = out[cut]
+        out.length = cut + 1
+        outTags.length = cut + 1
+        cum.length = cut + 1
+        total = cum[cut]
+        if (!(tail[0] === p[0] && tail[1] === p[1])) {
+          total += distKm(tail, p)
+          out.push(p)
+          outTags.push(tag)
+          cum.push(total)
+        }
+        continue
+      }
+    }
+    total += step
+    out.push(p)
+    outTags.push(tag)
+    cum.push(total)
+  }
+  return { pts: out, tags: outTags }
+}
+
 /**
  * 为整趟列车构建沿线路路径
  * @param {object} train 车次（stops 含 code/arr/dep）
  * @param {Record<string,object>} stationsMap 电报码 → 车站（含 lat/lng）
  * @param {object} index buildRailIndex 产物
- * @param {Map} pairCache 站对缓存（跨车次复用）
- * @returns {{pts:number[][], kmAt:number[], stopKm:number[], totalKm:number}|null}
+ * @param {Map} pairCache 站对缓存（跨车次复用；值为点列或 null）
+ * @returns {{pts:number[][], kmAt:number[], stopKm:number[], stopPt:number[], totalKm:number,
+ *            degraded:number[]}|null}
  */
 export function buildTrainPath(train, stationsMap, index, pairCache = new Map(), router = null) {
   const stops = train.stops.map((s) => stationsMap[s.code]).filter(Boolean)
   if (stops.length < 2) return null
   const pts = []
-  const kmAt = []
-  const stopKm = [0]
-  let km = 0
-  const pushPt = (p) => {
-    if (pts.length) km += distKm(pts[pts.length - 1], p)
+  const tags = [] // 0 = 普通点，n = 第 n 个停站的收尾点
+  const degraded = [] // 退化成站点直线的区间序号
+  const pushPt = (p, tag = 0) => {
+    const last = pts[pts.length - 1]
+    if (last && last[0] === p[0] && last[1] === p[1]) {
+      if (tag > 0) tags[tags.length - 1] = tag
+      return
+    }
     pts.push(p)
-    kmAt.push(km)
+    tags.push(tag)
   }
   for (let i = 0; i < stops.length - 1; i++) {
     const a = [stops[i].lat, stops[i].lng]
@@ -205,22 +307,53 @@ export function buildTrainPath(train, stationsMap, index, pairCache = new Map(),
     if (pairCache.has(key)) {
       seg = pairCache.get(key)
     } else {
-      // 优先弦线采样（快）；吸附跑偏/失败 → 路由图兜底（Dijkstra）→ 弦线
+      const chord = distKm(a, b)
+      // 优先弦线采样（快）；失败先拉大吸附半径重试，再走路由图；都没有才退化直线
       let snapped = snapChord(a, b, index)
+      if (!snapped && chord > 15) snapped = snapChord(a, b, index, 0, 45)
       if (snapped) {
         let len = 0
         for (let j = 1; j < snapped.length; j++) len += distKm(snapped[j - 1], snapped[j])
         // 误吸附到相邻走廊会来回跳线，路径长度会明显超出弦线
-        if (len > distKm(a, b) * 2.5 + 30) snapped = null
+        if (len > chord * 2.5 + 30) snapped = null
       }
-      seg = snapped || (router ? router(a, b) : null) || [a, b]
+      seg = snapped || (router ? router(a, b) : null) || null
       pairCache.set(key, seg)
     }
-    const start = pts.length === 0 ? 0 : 1
-    for (let j = start; j < seg.length; j++) pushPt(seg[j])
-    stopKm.push(km)
+    if (!seg) degraded.push(i)
+    if (!seg) {
+      if (!pts.length) pushPt(a)
+      pushPt(b, i + 1)
+    } else {
+      const clean = removeLoops(seg)
+      // 站台离主线不远时用真实站坐标收尾；太远就沿用线位点，避免站场折返
+      if (!pts.length && distKm(a, clean[0]) <= STATION_SNAP_KM) pushPt(a)
+      for (const p of clean) pushPt(p)
+      if (distKm(clean[clean.length - 1], b) <= STATION_SNAP_KM) {
+        pushPt(b, i + 1)
+      } else if (tags.length) {
+        tags[tags.length - 1] = i + 1 // 停站标在最后一个线位点上
+      }
+    }
   }
-  return { pts, kmAt, stopKm, totalKm: km }
+
+  // 整条路径再剪一次跨站回环，然后按保留点重算里程与停站下标
+  const trimmed = trimPathLoops(pts, tags)
+  const outPts = trimmed.pts
+  const kmAt = []
+  let km = 0
+  for (let i = 0; i < outPts.length; i++) {
+    if (i) km += distKm(outPts[i - 1], outPts[i])
+    kmAt.push(km)
+  }
+  const stopPt = [0]
+  for (let s = 1; s < stops.length; s++) {
+    let idx = trimmed.tags.lastIndexOf(s)
+    if (idx < 0) idx = outPts.length - 1
+    stopPt.push(idx)
+  }
+  const stopKm = stopPt.map((idx) => kmAt[idx] ?? km)
+  return { pts: outPts, kmAt, stopKm, stopPt, totalKm: km, degraded }
 }
 
 /**

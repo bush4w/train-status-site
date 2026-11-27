@@ -2,14 +2,24 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import TrainMap from './components/TrainMap'
 import ControlPanel from './components/ControlPanel'
 import TrainDetail from './components/TrainDetail'
+import TrainJourneyDiagram from './components/TrainJourneyDiagram'
 import SearchBox from './components/SearchBox'
 import Timeline from './components/Timeline'
 import TrainDiagram from './components/TrainDiagram'
 import { meta } from './data/meta'
 import { statusColor, ON_TIME_COLOR, DELAY_COLOR } from './lib/status'
+import { applyLiveDelays } from './lib/delays'
 import { computeTrainPosition } from './lib/position'
 import { TRAIN_TYPES, trainCategory } from './lib/train-type'
-import { CORRIDORS, resolveCorridor, corridorOfTrain } from './lib/diagram'
+import { CORRIDORS, resolveCorridor } from './lib/diagram'
+
+function daysBetween(from, to) {
+  if (!from) return 0
+  const a = new Date(`${from}T00:00:00`)
+  const b = new Date(`${to.getFullYear()}-${String(to.getMonth() + 1).padStart(2, '0')}-${String(to.getDate()).padStart(2, '0')}T00:00:00`)
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 0
+  return Math.round((b - a) / 86400000)
+}
 
 export default function App() {
   // 路网数据运行时加载（全量车次数 MB，不进主包）
@@ -25,7 +35,10 @@ export default function App() {
   const [flyTarget, setFlyTarget] = useState(null)
   const [legendOpen, setLegendOpen] = useState(true)
   const [liveDelays, setLiveDelays] = useState(null)
+  const [fetchStatus, setFetchStatus] = useState(null)
   const [corridorId, setCorridorId] = useState(null)
+  // 车次全程运行图（null = 关闭）：点详情里的「查看全程运行图」打开
+  const [journeyNo, setJourneyNo] = useState(null)
   // 线路图层：全部 / 仅高铁（hsr）/ 仅普速（conv）
   const [lineFilter, setLineFilter] = useState('all')
   const liveModeRef = useRef(liveMode)
@@ -62,6 +75,29 @@ export default function App() {
     return () => clearInterval(id)
   }, [playing, speed, scrubbing])
 
+  // 全量抓取进度：读取 live/fetch-status.json；完成后提示刷新
+  useEffect(() => {
+    let alive = true
+    let timer
+    const poll = async () => {
+      try {
+        const r = await fetch(`live/fetch-status.json?_=${Date.now()}`, { cache: 'no-store' })
+        if (r.ok) {
+          const j = await r.json()
+          if (alive && j) setFetchStatus(j)
+        }
+      } catch {
+        /* 无状态文件时静默 */
+      }
+      if (alive) timer = setTimeout(poll, 30000)
+    }
+    poll()
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [])
+
   // 实时晚点轮询：读取 auto-refresh 生成的 live/delays.json（45–75s 随机间隔）
   useEffect(() => {
     let alive = true
@@ -85,16 +121,12 @@ export default function App() {
     }
   }, [])
 
-  // 有效车次 = 构建时数据 ⊕ 实时晚点
+  // 有效车次 = 构建时数据 ⊕ 实时晚点（未抽样车次标 delayKnown=false）
   const trains = data?.trains
   const effectiveTrains = useMemo(() => {
     if (!trains) return []
     if (!liveDelays?.delays) return trains
-    return trains.map((t) =>
-      liveDelays.delays[t.no] != null && liveDelays.delays[t.no] !== t.delay
-        ? { ...t, delay: liveDelays.delays[t.no] }
-        : t,
-    )
+    return applyLiveDelays(trains, liveDelays)
   }, [trains, liveDelays])
 
   // 走廊解析（数据加载后）
@@ -105,6 +137,17 @@ export default function App() {
   const corridor = allCorridors.find((c) => c.id === corridorId) || null
 
   const simMinutes = simTime.getHours() * 60 + simTime.getMinutes() + simTime.getSeconds() / 60
+  // 数据日期 → 模拟日期（不是墙钟）的天数差：模拟时钟跨过零点、页面开过夜时 nowAbs 自动 >1440
+  const dataDate = meta.dataDate || meta.generatedAt
+  const dayDelta = daysBetween(dataDate, simTime)
+  const nowAbs = dayDelta * 1440 + simMinutes
+  // 抓取完成但当前页面仍是旧快照：日期变化或车次数变化都提示刷新
+  const dataStale =
+    fetchStatus &&
+    !fetchStatus.running &&
+    fetchStatus.phase === 'done' &&
+    ((fetchStatus.dataDate && fetchStatus.dataDate !== dataDate) ||
+      (typeof fetchStatus.trains === 'number' && fetchStatus.trains !== (meta.counts?.trains ?? 0)))
 
   const goLive = () => {
     setLiveMode(true)
@@ -116,17 +159,18 @@ export default function App() {
   }
   const scrubTo = (m) => {
     setLiveMode(false)
-    const d = new Date()
-    d.setHours(0, 0, 0, 0)
-    d.setTime(d.getTime() + m * 60000)
-    setSimTime(d)
+    // 以数据日 00:00 为基准：m ≥ 1440 即进入次日，跨零点车次连续
+    const [y, mo, d] = dataDate.split('-').map(Number)
+    const base = new Date(y, mo - 1, d, 0, 0, 0, 0)
+    base.setTime(base.getTime() + m * 60000)
+    setSimTime(base)
   }
 
   const pad = (n) => String(n).padStart(2, '0')
   const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 
   const selectedTrain = effectiveTrains.find((t) => t.no === selectedNo) || null
-  const selectedTrainCorridor = selectedTrain ? corridorOfTrain(selectedTrain, allCorridors) : null
+  const journeyTrain = effectiveTrains.find((t) => t.no === journeyNo) || null
 
   // 图层过滤：图例计数与晚点榜单只统计当前图层的车次（地图侧由 TrainMap 按同一判定过滤）
   const mapTrains = useMemo(
@@ -152,7 +196,7 @@ export default function App() {
     const cat = trainCategory(t.no)
     if (lineFilter !== 'all' && cat !== lineFilter) setLineFilter(cat)
     setSelectedNo(t.no)
-    const pos = computeTrainPosition(t, data.stationsMap, simMinutes)
+    const pos = computeTrainPosition(t, data.stationsMap, nowAbs)
     setFlyTarget({ lat: pos.lat, lng: pos.lng, zoom: 9, seq: flySeq + 1 })
   }
   const pickStation = (s) => {
@@ -174,11 +218,27 @@ export default function App() {
 
   return (
     <div className="app">
+      {fetchStatus?.running && (
+        <div className="fetch-banner">
+          全量抓取中 {fetchStatus.done ?? 0}/{fetchStatus.total ?? '…'} ·{' '}
+          {fetchStatus.phase === 'timetables' ? '时刻表' : fetchStatus.phase}
+        </div>
+      )}
+      {dataStale && (
+        <div className="fetch-banner done">
+          数据已更新（{fetchStatus.dataDate}
+          {typeof fetchStatus.trains === 'number' ? ` · ${fetchStatus.trains} 趟` : ''}）
+          <button type="button" onClick={() => window.location.reload()}>
+            刷新页面
+          </button>
+        </div>
+      )}
       <TrainMap
         stations={data.stations}
         stationsMap={data.stationsMap}
         trains={effectiveTrains}
         simMinutes={simMinutes}
+        nowAbs={nowAbs}
         selectedNo={selectedNo}
         onSelect={setSelectedNo}
         flyTarget={flyTarget}
@@ -205,7 +265,7 @@ export default function App() {
         <SearchBox stations={data.stations} trains={effectiveTrains} onPickTrain={pickTrain} onPickStation={pickStation} />
       </ControlPanel>
       <Timeline
-        minutes={simMinutes}
+        minutes={nowAbs}
         onScrub={scrubTo}
         onScrubStart={() => setScrubbing(true)}
         onScrubEnd={() => setScrubbing(false)}
@@ -214,7 +274,7 @@ export default function App() {
         <TrainDiagram
           corridor={corridor}
           trains={effectiveTrains}
-          simMinutes={simMinutes}
+          simMinutes={nowAbs}
           selectedNo={selectedNo}
           onPickTrain={(no) => {
             const t = effectiveTrains.find((x) => x.no === no)
@@ -223,14 +283,28 @@ export default function App() {
           onClose={() => setCorridorId(null)}
         />
       )}
+      {journeyTrain && (
+        <TrainJourneyDiagram
+          train={journeyTrain}
+          stationsMap={data.stationsMap}
+          trains={effectiveTrains}
+          corridors={allCorridors}
+          nowAbs={nowAbs}
+          selectedNo={selectedNo}
+          onPickTrain={(no) => {
+            setSelectedNo(no)
+            setJourneyNo(no)
+          }}
+          onClose={() => setJourneyNo(null)}
+        />
+      )}
       {selectedTrain && (
         <TrainDetail
           train={selectedTrain}
           stationsMap={data.stationsMap}
-          simMinutes={simMinutes}
+          nowAbs={nowAbs}
           onClose={() => setSelectedNo(null)}
-          onDiagram={selectedTrainCorridor ? () => setCorridorId(selectedTrainCorridor.id) : null}
-          diagramName={selectedTrainCorridor?.name}
+          onJourney={() => setJourneyNo(selectedTrain.no)}
         />
       )}
       <div className={`legend${legendOpen ? '' : ' collapsed'}`}>
@@ -262,12 +336,18 @@ export default function App() {
               <span>正点</span>
               <span className="ring-demo delayed" />
               <span>晚点</span>
+              <span className="ring-demo unknown" />
+              <span>未实测</span>
             </div>
             <div className="item muted">
               在图车次 {mapTrains.length} · 车站 {meta.counts?.stations ?? data.stations.length}
             </div>
             <div className="item muted">缩放分级：远景大站快车，放大显示更多列车与车站</div>
-            {lateTop.length === 0 && <div className="item muted">抽样车次当前均正点</div>}
+            {lateTop.length === 0 && (
+              <div className="item muted">
+                {liveDelays?.sampled ? `本轮实测 ${liveDelays.sampled.length} 趟，均正点` : '抽样车次当前均正点'}
+              </div>
+            )}
             {lateTop.map((t) => (
               <div
                 className={`item clickable${t.no === selectedNo ? ' active' : ''}`}
@@ -282,6 +362,7 @@ export default function App() {
             ))}
             <div className="item muted">
               正晚点：{delayAsOf ? `抽样实测于 ${delayAsOf}` : meta.sources.delay}
+              {liveDelays?.sampled ? ` · 覆盖 ${liveDelays.sampled.length} 趟` : ''}
               {liveDelays && <span className="live-dot" title="实时刷新已连接" />}
             </div>
             <div className="item muted">数据 {meta.generatedAt} · 非官方实时，仅供参考</div>

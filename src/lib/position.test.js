@@ -88,3 +88,51 @@ describe('computeTrainPosition', () => {
     expect(pos.delay).toBe(0)
   })
 })
+
+// 跨零点：A 21:12 发 → B 23:50 到 / 次日 00:10 发 → C 次日 07:29 到
+const overnight = {
+  no: 'Z16',
+  delay: 0,
+  startOffset: 0,
+  stops: [
+    { code: 'A', arr: null, dep: '21:12', arrDay: null, depDay: 0 },
+    { code: 'B', arr: '23:50', dep: '00:10', arrDay: 0, depDay: 1 },
+    { code: 'C', arr: '07:29', dep: null, arrDay: 1, depDay: null },
+  ],
+}
+
+describe('跨零点位置推算', () => {
+  it('当日 22:00：A→B 运行中', () => {
+    const pos = computeTrainPosition(overnight, stationsMap, at(22))
+    expect(pos.status).toBe('running')
+    expect(pos.label).toBe('甲站 → 乙站')
+  })
+
+  it('次日 00:05：B 站停靠（到 23:50 / 发 00:10）', () => {
+    const pos = computeTrainPosition(overnight, stationsMap, 1440 + 5)
+    expect(pos.status).toBe('stopped')
+    expect(pos.label).toContain('乙站')
+  })
+
+  it('次日 03:00：B→C 运行中（进度约 0.43）', () => {
+    const pos = computeTrainPosition(overnight, stationsMap, 1440 + 180)
+    expect(pos.status).toBe('running')
+    expect(pos.label).toBe('乙站 → 丙站')
+    expect(pos.progress).toBeGreaterThan(0.3)
+    expect(pos.progress).toBeLessThan(0.6)
+  })
+
+  it('昨日始发（startOffset=-1）：今日 03:00 仍在 B→C 运行', () => {
+    const y = { ...overnight, startOffset: -1 }
+    const pos = computeTrainPosition(y, stationsMap, at(3))
+    expect(pos.status).toBe('running')
+    expect(pos.label).toBe('乙站 → 丙站')
+  })
+
+  it('昨日始发：今日 08:00 已终到', () => {
+    const y = { ...overnight, startOffset: -1 }
+    const pos = computeTrainPosition(y, stationsMap, at(8))
+    expect(pos.status).toBe('arrived')
+    expect(pos.lat).toBe(2)
+  })
+})

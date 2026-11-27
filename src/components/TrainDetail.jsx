@@ -4,9 +4,10 @@ import { trainTypeInfo } from '../lib/train-type'
 
 // F3 车次详情：点击列车后展示车次、当前区间、正晚点与全程时刻表
 // 时刻表高亮当前所在站（运行中时同时标记前方站）
-export default function TrainDetail({ train, stationsMap, simMinutes, onClose, onDiagram, diagramName }) {
-  const pos = computeTrainPosition(train, stationsMap, simMinutes)
-  const color = statusColor(pos.delay)
+export default function TrainDetail({ train, stationsMap, simMinutes, nowAbs, onClose, onJourney }) {
+  const pos = computeTrainPosition(train, stationsMap, nowAbs ?? simMinutes)
+  const known = train.delayKnown !== false
+  const color = statusColor(pos.delay, known)
   const type = trainTypeInfo(train.no)
   const first = stationsMap[train.stops[0].code]
   const last = stationsMap[train.stops[train.stops.length - 1].code]
@@ -22,6 +23,7 @@ export default function TrainDetail({ train, stationsMap, simMinutes, onClose, o
           <span className="detail-type" title={type.desc}>
             {type.label} · {type.speed}
           </span>
+          {train.crossDay && <span className="detail-type next-day">跨日</span>}
         </span>
         <button type="button" className="detail-close btn-icon" onClick={onClose} aria-label="关闭">
           ×
@@ -32,8 +34,8 @@ export default function TrainDetail({ train, stationsMap, simMinutes, onClose, o
         <span className="badge" style={{ background: color }}>
           {STATUS_TEXT[pos.status]}
         </span>
-        <span className={pos.delay ? 'delay-text' : 'ontime-text'}>
-          {pos.delay ? `晚点 ${pos.delay} 分` : '正点'}
+        <span className={known ? (pos.delay ? 'delay-text' : 'ontime-text') : 'unknown-text'}>
+          {known ? (pos.delay ? `晚点 ${pos.delay} 分` : '正点') : '未实测'}
         </span>
       </div>
 
@@ -44,9 +46,9 @@ export default function TrainDetail({ train, stationsMap, simMinutes, onClose, o
             预计 {pos.arrTime} 到 {pos.nextStation}
           </div>
         )}
-        {onDiagram && (
-          <button type="button" className="diagram-btn" onClick={onDiagram}>
-            📈 查看{diagramName}运行图
+        {onJourney && (
+          <button type="button" className="diagram-btn" onClick={onJourney}>
+            📈 查看全程运行图
           </button>
         )}
       </div>
@@ -72,15 +74,23 @@ export default function TrainDetail({ train, stationsMap, simMinutes, onClose, o
                   {stationsMap[s.code].name}
                   {isCurrent && <span className="here">◀ 当前</span>}
                 </td>
-                <td>{s.arr ?? '—'}</td>
-                <td>{s.dep ?? '—'}</td>
+                <td>
+                  {s.arr ?? '—'}
+                  {s.arrDay > 0 && <span className="next-day">次日</span>}
+                </td>
+                <td>
+                  {s.dep ?? '—'}
+                  {s.depDay > 0 && <span className="next-day">次日</span>}
+                </td>
               </tr>
             )
           })}
         </tbody>
       </table>
 
-      <div className="detail-note">推算位置 · 非官方实时数据，仅供参考</div>
+      <div className="detail-note">
+        {known ? '推算位置 · 非官方实时数据，仅供参考' : '本轮抽样未覆盖该车次 · 位置为时刻表推算，仅供参考'}
+      </div>
     </div>
   )
 }

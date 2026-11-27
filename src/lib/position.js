@@ -1,38 +1,44 @@
 // 位置推算算法
-// 依据：车次时刻表（各站到发时刻）+ 当前时间 + 正晚点延迟
+// 依据：车次时刻表（各站到发时刻 + 跨零点天数）+ 当前时间 + 正晚点延迟
+//
+// 时间口径：nowMinutes 是「相对数据日期（meta.dataDate）的绝对分钟」，
+// 可大于 1440（跨日）。车次用 startOffset（相对数据日期的始发日偏移）换算：
+//   t = nowMinutes - startOffset * 1440 - delay
+// 跨零点车次用 stop.arrDay / stop.depDay（0=当日，1=次日）展开为绝对分钟。
 //
 // computeTrainStatus  → 状态 + 区间序号 k + 区间进度 progress（供"沿真实线位吸附"使用）
 // computeTrainPosition → 兼容版：站间弦线插值出经纬度（无几何数据/测试用）
 
-function toMinutes(hm) {
+function toMinutes(hm, day = 0) {
   if (hm == null) return null
   const [h, m] = hm.split(':').map(Number)
-  return h * 60 + m
+  return (day ?? 0) * 1440 + h * 60 + m
 }
 
 /**
- * @param {object} train     车次对象 { no, delay, stops: [{code, arr, dep}] }
+ * @param {object} train     车次对象 { no, delay, startOffset?, stops: [{code, arr, dep, arrDay?, depDay?}] }
  * @param {object} stationsMap  { code: { name, lat, lng } }
- * @param {number} nowMinutes 当前模拟时间（当天分钟数，可含小数）
+ * @param {number} nowMinutes 当前模拟时间（相对数据日期的绝对分钟，可 >1440）
  * @returns {{status:string, k:number, progress:number, label:string, delay:number,
  *            stopIndex:number, nextIndex?:number, nextStation?:string, arrTime?:string}}
  */
 export function computeTrainStatus(train, stationsMap, nowMinutes) {
   const delay = train.delay || 0
-  const t = nowMinutes - delay // 晚点 delay 分钟 => 实际位置落后 delay 分钟
+  const offset = (train.startOffset ?? 0) * 1440
+  const t = nowMinutes - offset - delay // 晚点 delay 分钟 => 实际位置落后 delay 分钟
 
   const stops = train.stops
-  const firstDep = toMinutes(stops[0].dep)
-  const lastArr = toMinutes(stops[stops.length - 1].arr)
+  const firstDep = toMinutes(stops[0].dep, stops[0].depDay ?? 0)
+  const lastArr = toMinutes(stops[stops.length - 1].arr, stops[stops.length - 1].arrDay ?? 0)
 
   // 未发车（严格早于发车时刻；恰在发车时刻视为进入区间，进度 0）
-  if (t < firstDep) {
+  if (firstDep != null && t < firstDep) {
     const s = stationsMap[stops[0].code]
     return { status: 'pending', k: 0, progress: 0, label: `待发车 · ${s.name}`, delay, stopIndex: 0 }
   }
 
   // 已终到
-  if (t >= lastArr) {
+  if (lastArr != null && t >= lastArr) {
     const s = stationsMap[stops[stops.length - 1].code]
     return {
       status: 'arrived',
@@ -48,10 +54,11 @@ export function computeTrainStatus(train, stationsMap, nowMinutes) {
   for (let i = 0; i < stops.length - 1; i++) {
     const cur = stops[i]
     const next = stops[i + 1]
-    const dep = toMinutes(cur.dep)
-    const arr = toMinutes(next.arr)
+    const dep = toMinutes(cur.dep, cur.depDay ?? 0)
+    const arr = toMinutes(next.arr, next.arrDay ?? 0)
+    const nextDep = toMinutes(next.dep, next.depDay ?? 0)
 
-    if (t >= dep && t < arr) {
+    if (dep != null && arr != null && t >= dep && t < arr) {
       const s1 = stationsMap[cur.code]
       const s2 = stationsMap[next.code]
       const span = arr - dep
@@ -67,7 +74,7 @@ export function computeTrainStatus(train, stationsMap, nowMinutes) {
         stopIndex: i,
         nextIndex: i + 1,
       }
-    } else if (next.dep != null && t >= arr && t < toMinutes(next.dep)) {
+    } else if (nextDep != null && arr != null && t >= arr && t < nextDep) {
       const s2 = stationsMap[next.code]
       return { status: 'stopped', k: i + 1, progress: 0, label: `停靠 · ${s2.name}`, delay, stopIndex: i + 1 }
     }
