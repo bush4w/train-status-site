@@ -1,26 +1,28 @@
 {
-  "date": "2026-11-27",
-  "generatedAt": "2026-11-26T17:58:22.093Z",
+  "date": "2026-11-28",
+  "generatedAt": "2026-11-27T17:14:31.463Z",
   "catalog": {
-    "trainNo": 12548,
-    "services": 16171,
-    "emuServices": 14003,
-    "convServices": 2168,
+    "trainNo": 12667,
+    "services": 16301,
+    "emuServices": 14086,
+    "convServices": 2215,
     "byLetter": {
-      "C": 3349,
-      "D": 3478,
-      "G": 6159,
-      "N": 181,
+      "C": 3368,
+      "D": 3517,
+      "G": 6184,
+      "N": 180,
       "S": 1017,
-      "V": 1660,
-      "Y": 54,
-      "Z": 273
-    }
+      "V": 1668,
+      "Y": 93,
+      "Z": 274
+    },
+    "baselineDate": "2026-11-27",
+    "baselineEntries": 17163
   },
-  "capturedTrains": 12558,
-  "capturedServices": 16181,
-  "syntheticStations": 351,
-  "resolvedStations": 0,
+  "capturedTrains": 12639,
+  "capturedServices": 16264,
+  "syntheticStations": 344,
+  "resolvedStations": 344,
   "skip": {
     "empty": 1,
     "ungeocoded": 0,
@@ -28,9 +30,9 @@
   },
   "unknownStations": [],
   "timetable": {
-    "exact": 0,
-    "reused": 11768,
-    "fetched": 791,
+    "exact": 134,
+    "reused": 12505,
+    "fetched": 1,
     "failed": 1
   }
 }
