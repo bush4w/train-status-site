@@ -70,7 +70,7 @@ function tooltipHtml(t, minutes, stationsMap) {
   )
 }
 
-export default function TrainMap({ stations, stationsMap, trains, simMinutes, nowAbs, selectedNo, onSelect, flyTarget, selectedCorridor, onPickCorridor, lineFilter = 'all' }) {
+export default function TrainMap({ stations, stationsMap, trains, simMinutes, nowAbs, selectedNo, onSelect, flyTarget, selectedCorridor, onPickCorridor, lineFilter = 'all', counties = null, countyVisible = true, selectedCounty = null, onPickCounty, onCenter }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef(new Map())
@@ -83,6 +83,8 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, no
   simRef.current = nowAbs ?? simMinutes
   const onSelectRef = useRef(onSelect)
   onSelectRef.current = onSelect
+  const onCenterRef = useRef(onCenter)
+  onCenterRef.current = onCenter
   const trainsRef = useRef(trains)
   trainsRef.current = trains
   const stationsMapRef = useRef(stationsMap)
@@ -95,6 +97,17 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, no
   onPickCorridorRef.current = onPickCorridor
   const lineFilterRef = useRef(lineFilter)
   lineFilterRef.current = lineFilter
+  // 区县图层（M6a）
+  const countyLayerRef = useRef(null)
+  const countyPolysRef = useRef(new Map())
+  const countiesRef = useRef(counties)
+  countiesRef.current = counties
+  const countyVisibleRef = useRef(countyVisible)
+  countyVisibleRef.current = countyVisible
+  const selectedCountyRef = useRef(selectedCounty)
+  selectedCountyRef.current = selectedCounty
+  const onPickCountyRef = useRef(onPickCounty)
+  onPickCountyRef.current = onPickCounty
 
   // 当前图层的车次池：只画本层列车（全量 trains 仍用于建路径与车站分级）
   const layerTrains = useMemo(
@@ -231,6 +244,64 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, no
     }
   }
 
+  // ---------- 区县/地市边界（M6a） ----------
+  function featureBBox(f) {
+    if (f._bbox) return f._bbox
+    let minLat = 90
+    let maxLat = -90
+    let minLng = 180
+    let maxLng = -180
+    for (const ring of f.polys ?? []) {
+      for (const [lat, lng] of ring) {
+        if (lat < minLat) minLat = lat
+        if (lat > maxLat) maxLat = lat
+        if (lng < minLng) minLng = lng
+        if (lng > maxLng) maxLng = lng
+      }
+    }
+    f._bbox = [minLat, minLng, maxLat, maxLng]
+    return f._bbox
+  }
+
+  // 只画当前视野内的边界：zoom≥7 区县，5–6 地市，更远不画
+  function syncCounties() {
+    const map = mapRef.current
+    const layer = countyLayerRef.current
+    const data = countiesRef.current
+    if (!map || !layer) return
+    layer.clearLayers()
+    countyPolysRef.current = new Map()
+    if (!data || !countyVisibleRef.current) return
+    const zoom = map.getZoom()
+    const useCounty = zoom >= 7
+    if (!useCounty && zoom < 5) return
+    const list = useCounty ? data.counties ?? [] : data.cities ?? []
+    const bounds = map.getBounds().pad(0.15)
+    const sel = selectedCountyRef.current
+    for (const f of list) {
+      if (!f.polys?.length) continue
+      const [minLat, minLng, maxLat, maxLng] = featureBBox(f)
+      if (maxLat < bounds.getSouth() || minLat > bounds.getNorth()) continue
+      if (maxLng < bounds.getWest() || minLng > bounds.getEast()) continue
+      const isSel = Boolean(sel && sel.code === f.code)
+      const poly = L.polygon(f.polys, {
+        color: isSel ? '#e67e22' : useCounty ? '#c8871f' : '#8d733f',
+        weight: isSel ? 2.6 : useCounty ? 1.2 : 1.4,
+        opacity: isSel ? 0.95 : 0.55,
+        fillColor: isSel ? '#e67e22' : '#c9a227',
+        fillOpacity: isSel ? 0.15 : useCounty ? 0.03 : 0,
+        interactive: true,
+      })
+      poly.bindTooltip(f.name, { sticky: true })
+      poly.on('click', (e) => {
+        if (e.originalEvent) L.DomEvent.stopPropagation(e.originalEvent)
+        onPickCountyRef.current?.(f)
+      })
+      poly.addTo(layer)
+      countyPolysRef.current.set(f.code, poly)
+    }
+  }
+
   // ---------- 车站分层（按停站车次数 + 坐标精度分三级） ----------
   function buildStationLayers() {
     const map = mapRef.current
@@ -291,13 +362,25 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, no
       },
     ).addTo(map)
     buildStationLayers()
+    // 区县图层：与底图共用 Canvas 渲染（Leaflet 对 interactive 图层做命中测试）
+    countyLayerRef.current = L.layerGroup().addTo(map)
     map.on('click', () => onSelectRef.current(null))
-    map.on('moveend', syncMarkers)
-    map.on('zoomend', syncMarkers)
+    map.on('moveend', () => {
+      syncMarkers()
+      syncCounties()
+      const c = map.getCenter()
+      onCenterRef.current?.({ lat: c.lat, lng: c.lng })
+    })
+    map.on('zoomend', () => {
+      syncMarkers()
+      syncCounties()
+    })
 
     mapRef.current = map
     const timer = setInterval(syncMarkers, 500)
     syncMarkers()
+    const c0 = map.getCenter()
+    onCenterRef.current?.({ lat: c0.lat, lng: c0.lng })
     return () => {
       clearInterval(timer)
       map.remove()
@@ -308,6 +391,8 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, no
       indexRef.current = null
       selRouteRef.current = null
       stationLayersRef.current = null
+      countyLayerRef.current = null
+      countyPolysRef.current = new Map()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -463,6 +548,12 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, no
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // ---------- 区县数据/显隐/选中变化 → 重绘边界 ----------
+  useEffect(() => {
+    syncCounties()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [counties, countyVisible, selectedCounty])
 
   // ---------- 选中车次/走廊变化 → 立即同步 ----------
   useEffect(() => {

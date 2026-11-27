@@ -24,6 +24,9 @@ export default function ControlPanel({
   onClearCorridor,
   lineFilter,
   onLineFilter,
+  countyVisible,
+  onCountyToggle,
+  countyReady,
   children,
 }) {
   return (
@@ -71,6 +74,21 @@ export default function ControlPanel({
         </div>
       </div>
 
+      <div className="panel-layer">
+        <span className="label">区域</span>
+        <div className="speed-btns">
+          <button
+            type="button"
+            className={countyVisible ? 'active' : ''}
+            onClick={onCountyToggle}
+            disabled={!countyReady}
+            title="显示地市/区县边界；放大到 7 级后点击区县可查直达车次"
+          >
+            区县边界
+          </button>
+        </div>
+      </div>
+
       <div className="panel-actions">
         <button type="button" onClick={onToggle}>
           {playing ? '⏸ 暂停' : '▶ 播放'}
@@ -109,7 +127,7 @@ export default function ControlPanel({
         </div>
       )}
 
-      <div className="panel-hint">点击列车查看详情 · 拖动底部时间轴可回放</div>
+      <div className="panel-hint">点击列车看详情 · 放大后点区县查直达 · 拖动底部时间轴回放</div>
     </div>
   )
 }

@@ -3,6 +3,7 @@ import TrainMap from './components/TrainMap'
 import ControlPanel from './components/ControlPanel'
 import TrainDetail from './components/TrainDetail'
 import TrainJourneyDiagram from './components/TrainJourneyDiagram'
+import CountyPanel from './components/CountyPanel'
 import SearchBox from './components/SearchBox'
 import Timeline from './components/Timeline'
 import TrainDiagram from './components/TrainDiagram'
@@ -10,6 +11,7 @@ import { meta } from './data/meta'
 import { statusColor, ON_TIME_COLOR, DELAY_COLOR } from './lib/status'
 import { applyLiveDelays } from './lib/delays'
 import { computeTrainPosition } from './lib/position'
+import { nearestHubStation } from './lib/access'
 import { TRAIN_TYPES, trainCategory } from './lib/train-type'
 import { CORRIDORS, resolveCorridor } from './lib/diagram'
 
@@ -41,6 +43,13 @@ export default function App() {
   const [journeyNo, setJourneyNo] = useState(null)
   // 线路图层：全部 / 仅高铁（hsr）/ 仅普速（conv）
   const [lineFilter, setLineFilter] = useState('all')
+  // M6a：区县图层与可达查询
+  const [counties, setCounties] = useState(null)
+  const [countyVisible, setCountyVisible] = useState(true)
+  const [selectedCounty, setSelectedCounty] = useState(null)
+  const [mapCenter, setMapCenter] = useState(null)
+  const [origin, setOrigin] = useState(null)
+  const originInitRef = useRef(false)
   const liveModeRef = useRef(liveMode)
   liveModeRef.current = liveMode
 
@@ -95,6 +104,20 @@ export default function App() {
     return () => {
       alive = false
       clearTimeout(timer)
+    }
+  }, [])
+
+  // 区县边界：运行时加载（数 MB，失败时静默关闭该功能）
+  useEffect(() => {
+    let alive = true
+    fetch('data/counties.json')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (alive && j?.counties?.length) setCounties(j)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
     }
   }, [])
 
@@ -195,12 +218,36 @@ export default function App() {
     // 搜到不在当前图层的车次时，自动切到它所属的图层，保证看得见
     const cat = trainCategory(t.no)
     if (lineFilter !== 'all' && cat !== lineFilter) setLineFilter(cat)
+    setSelectedCounty(null)
     setSelectedNo(t.no)
     const pos = computeTrainPosition(t, data.stationsMap, nowAbs)
     setFlyTarget({ lat: pos.lat, lng: pos.lng, zoom: 9, seq: flySeq + 1 })
   }
   const pickStation = (s) => {
     setFlyTarget({ lat: s.lat, lng: s.lng, zoom: 10, seq: flySeq + 1 })
+  }
+  // 起点默认值只算一次（取全国视图中心最近的枢纽站），之后不随地图移动
+  useEffect(() => {
+    if (originInitRef.current || !data || !mapCenter) return
+    const hub = nearestHubStation(data.stations, effectiveTrains, mapCenter, 1, 100)
+    if (hub.length) {
+      setOrigin(hub[0])
+      originInitRef.current = true
+    }
+  }, [data, effectiveTrains, mapCenter])
+  const setUserOrigin = (s) => {
+    originInitRef.current = true
+    setOrigin(s)
+  }
+
+  // 地图点选：选车时关掉区县面板，点区县时取消选车（右侧只保留一个面板）
+  const selectTrain = (no) => {
+    setSelectedNo(no)
+    if (no) setSelectedCounty(null)
+  }
+  const pickCounty = (f) => {
+    setSelectedCounty(f)
+    setSelectedNo(null)
   }
 
   const delayAsOf = liveDelays?.delayAsOf ?? meta.delayAsOf
@@ -240,11 +287,16 @@ export default function App() {
         simMinutes={simMinutes}
         nowAbs={nowAbs}
         selectedNo={selectedNo}
-        onSelect={setSelectedNo}
+        onSelect={selectTrain}
         flyTarget={flyTarget}
         selectedCorridor={corridorId}
         onPickCorridor={setCorridorId}
         lineFilter={lineFilter}
+        counties={counties}
+        countyVisible={countyVisible}
+        selectedCounty={selectedCounty}
+        onPickCounty={pickCounty}
+        onCenter={setMapCenter}
       />
       <ControlPanel
         time={fmtTime(simTime)}
@@ -261,6 +313,9 @@ export default function App() {
         onClearCorridor={() => setCorridorId(null)}
         lineFilter={lineFilter}
         onLineFilter={changeLayer}
+        countyVisible={countyVisible}
+        onCountyToggle={() => setCountyVisible((v) => !v)}
+        countyReady={Boolean(counties)}
       >
         <SearchBox stations={data.stations} trains={effectiveTrains} onPickTrain={pickTrain} onPickStation={pickStation} />
       </ControlPanel>
@@ -281,6 +336,20 @@ export default function App() {
             if (t) pickTrain(t)
           }}
           onClose={() => setCorridorId(null)}
+        />
+      )}
+      {selectedCounty && (
+        <CountyPanel
+          county={selectedCounty}
+          stations={data.stations}
+          stationsMap={data.stationsMap}
+          trains={effectiveTrains}
+          nowAbs={nowAbs}
+          center={mapCenter}
+          origin={origin}
+          onSetOrigin={setUserOrigin}
+          onClose={() => setSelectedCounty(null)}
+          onPickStation={pickStation}
         />
       )}
       {journeyTrain && (
@@ -341,6 +410,9 @@ export default function App() {
             </div>
             <div className="item muted">
               在图车次 {mapTrains.length} · 车站 {meta.counts?.stations ?? data.stations.length}
+            </div>
+            <div className="item muted">
+              {counties ? `区县 ${counties.counties.length} · 放大到 7 级点击查直达` : '区县边界加载中…'}
             </div>
             <div className="item muted">缩放分级：远景大站快车，放大显示更多列车与车站</div>
             {lateTop.length === 0 && (
