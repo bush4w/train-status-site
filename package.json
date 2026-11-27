@@ -15,7 +15,8 @@
     "refresh:once": "node scripts/auto-refresh.mjs --once",
     "fetch": "node scripts/fetch-railway-data.mjs",
     "fetch:all": "node scripts/fetch-railway-data.mjs --full",
-    "fetch:jinghu": "node scripts/fetch-railway-data.mjs --scope=jinghu"
+    "fetch:jinghu": "node scripts/fetch-railway-data.mjs --scope=jinghu",
+    "build:counties": "node scripts/build-counties.mjs"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
