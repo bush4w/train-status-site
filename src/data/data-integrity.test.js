@@ -8,6 +8,7 @@ const trains = JSON.parse(readFileSync('public/data/trains.json', 'utf8'))
 const stationsMap = Object.fromEntries(stations.map((s) => [s.code, s]))
 
 const toMin = (hm) => (hm == null ? null : Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5)))
+const toAbs = (hm, day = 0) => (hm == null ? null : (day ?? 0) * 1440 + toMin(hm))
 
 describe('M4 全国数据完整性', () => {
   it('车站规模与电报码合法性', () => {
@@ -69,12 +70,35 @@ describe('M4 全国数据完整性', () => {
       let prev = -1
       for (const s of t.stops) {
         expect(stationsMap[s.code], `${t.no} 经停码 ${s.code} 应在车站表`).toBeTruthy()
-        for (const hm of [s.arr, s.dep]) {
+        for (const [hm, day] of [[s.arr, s.arrDay], [s.dep, s.depDay]]) {
           if (hm == null) continue
           expect(hm).toMatch(/^\d{2}:\d{2}$/)
-          const m = toMin(hm)
+          const m = toAbs(hm, day)
           expect(m, `${t.no} 时刻应单调不减`).toBeGreaterThanOrEqual(prev)
           prev = m
+        }
+      }
+    }
+  })
+
+  it('aliases 合法：数组、不重复、不含主车次号', () => {
+    for (const t of trains) {
+      if (t.aliases == null) continue
+      expect(Array.isArray(t.aliases)).toBe(true)
+      expect(new Set(t.aliases).size).toBe(t.aliases.length)
+      expect(t.aliases).not.toContain(t.no)
+    }
+  })
+
+  it('跨日字段合法：crossDay 布尔，arrDay/depDay 为 0–3 的整数', () => {
+    for (const t of trains) {
+      if (t.crossDay != null) expect(typeof t.crossDay).toBe('boolean')
+      for (const s of t.stops) {
+        for (const d of [s.arrDay, s.depDay]) {
+          if (d == null) continue
+          expect(Number.isInteger(d), `${t.no} ${s.code} day=${d}`).toBe(true)
+          expect(d).toBeGreaterThanOrEqual(0)
+          expect(d).toBeLessThanOrEqual(3)
         }
       }
     }
@@ -87,9 +111,20 @@ describe('M4 全国数据完整性', () => {
     }
   })
 
+  it('全量规模：车站/车次/普速/跨零点均达标', () => {
+    expect(stations.length).toBeGreaterThanOrEqual(3413)
+    expect(trains.length).toBeGreaterThanOrEqual(11000)
+    const conv = trains.filter((t) => /^[ZNVY]/.test(t.no)).length
+    expect(conv).toBeGreaterThanOrEqual(1200)
+    expect(trains.filter((t) => t.crossDay).length).toBeGreaterThanOrEqual(200)
+  })
+
   it('meta 含规模、数据来源与合规声明', () => {
     expect(meta.counts.stations).toBe(stations.length)
     expect(meta.counts.trains).toBe(trains.length)
+    expect(meta.counts.services).toBeGreaterThanOrEqual(trains.length)
+    expect(meta.dataDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(meta.complete).toBe(true)
     expect(meta.sources.telecode).toContain('12306')
     expect(meta.sources.coord).toBeTruthy()
     expect(meta.sources.timetable).toBeTruthy()
@@ -97,5 +132,13 @@ describe('M4 全国数据完整性', () => {
     expect(meta.disclaimer).toContain('非官方')
     expect(meta.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     expect(meta.delayAsOf === null || typeof meta.delayAsOf === 'string').toBe(true)
+  })
+
+  it('status.json 与 meta 日期/规模一致且标记完整', () => {
+    const status = JSON.parse(readFileSync('public/data/status.json', 'utf8'))
+    expect(status.dataDate).toBe(meta.dataDate)
+    expect(status.complete).toBe(true)
+    expect(status.counts.trains).toBe(trains.length)
+    expect(status.counts.stations).toBe(stations.length)
   })
 })
