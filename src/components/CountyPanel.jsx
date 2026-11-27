@@ -1,15 +1,36 @@
 import { useMemo, useState } from 'react'
 import { countStops, findDirectTrains, fmtAbsMin, nearestStations, distanceKm } from '../lib/access'
+import { findTransferRoutes } from '../lib/transfer'
 import { trainTypeInfo } from '../lib/train-type'
 import { statusColor } from '../lib/status'
 
-// M6a：区县面板 —— 区县基本信息 + 收录车站 + 从起点直达的车次
+// M6a/M7：区县面板 —— 基本信息 + 收录车站 + 直达车次 + 单次中转建议
 // 热门内容/景点属 M6b（需整理数据），这里先留如实空状态。
 
 function durationText(min) {
   const h = Math.floor(min / 60)
   const m = Math.round(min % 60)
   return h ? `${h}h${String(m).padStart(2, '0')}` : `${m}m`
+}
+
+const isTourist = (no) => /^Y/i.test(no)
+
+function NoBadge({ no }) {
+  const type = trainTypeInfo(no)
+  return (
+    <span className="arrival-no" style={{ background: type.color }}>
+      {no}
+      {isTourist(no) ? <i className="badge-tour">旅游</i> : null}
+    </span>
+  )
+}
+
+function DelayBadge({ delay, known }) {
+  return (
+    <span className="arrival-status" style={{ color: statusColor(delay, known) }}>
+      {!known ? '未实测' : delay ? `+${delay}` : '正点'}
+    </span>
+  )
 }
 
 export default function CountyPanel({
@@ -25,6 +46,8 @@ export default function CountyPanel({
   onPickStation,
 }) {
   const [geoState, setGeoState] = useState('') // '' | 'asking' | 'denied' | 'ok'
+  // 按分钟取整：时钟每 100ms 跳一次，可达查询没必要跟到秒
+  const nowMinute = Math.floor(nowAbs)
 
   const countyStations = useMemo(
     () => (county.stations ?? []).map((code) => stationsMap[code]).filter(Boolean),
@@ -62,9 +85,15 @@ export default function CountyPanel({
   }, [stations, effectiveOrigin])
 
   const arrivals = useMemo(
-    () => (countyStations.length ? findDirectTrains(trains, fromCodes, county.stations, nowAbs, { limit: 40 }) : []),
-    [trains, fromCodes, county.stations, countyStations.length, nowAbs],
+    () => (countyStations.length ? findDirectTrains(trains, fromCodes, county.stations, nowMinute, { limit: 40 }) : []),
+    [trains, fromCodes, county.stations, countyStations.length, nowMinute],
   )
+
+  // 直达不足 3 趟时才尝试一次中转（耗时可观，避免每次打开都全量算）
+  const transfers = useMemo(() => {
+    if (!countyStations.length || arrivals.length >= 3) return []
+    return findTransferRoutes(trains, fromCodes, county.stations, nowMinute, { limit: 5 })
+  }, [trains, fromCodes, county.stations, countyStations.length, arrivals.length, nowMinute])
 
   const useMyLocation = () => {
     if (!navigator.geolocation) {
@@ -91,6 +120,8 @@ export default function CountyPanel({
       { timeout: 8000, maximumAge: 300000 },
     )
   }
+
+  const stName = (code) => stationsMap[code]?.name ?? code
 
   return (
     <div className="county-panel">
@@ -169,43 +200,76 @@ export default function CountyPanel({
         </div>
 
         {countyStations.length === 0 ? null : arrivals.length === 0 ? (
-          <div className="county-empty">未来 36 小时内无直达车次；可能需要中转（M7 规划）。</div>
+          <div className="county-empty" style={{ marginTop: 8 }}>
+            未来 36 小时内无直达车次{transfers.length ? '，可参考下方中转方案：' : '。'}
+          </div>
         ) : (
           <div className="county-arrivals">
-            {arrivals.map((a) => {
-              const type = trainTypeInfo(a.no)
-              const known = a.delayKnown !== false
-              const fromSt = stationsMap[a.from]
-              const toSt = stationsMap[a.to]
-              return (
-                <div className="arrival-row" key={a.no}>
-                  <span className="arrival-no" style={{ background: type.color }}>
-                    {a.no}
-                  </span>
-                  <span className="arrival-time">
-                    {fmtAbsMin(a.dep)}
-                    {fromSt ? <i>{fromSt.name}</i> : null}
-                  </span>
-                  <span className="arrival-arrow">→</span>
-                  <span className="arrival-time">
-                    {fmtAbsMin(a.arr)}
-                    {toSt ? <i>{toSt.name}</i> : null}
-                  </span>
-                  <span className="arrival-dur">{durationText(a.durationMin)}</span>
-                  <span className="arrival-status" style={{ color: statusColor(a.delay, known) }}>
-                    {!known ? '未实测' : a.delay ? `+${a.delay}` : '正点'}
-                  </span>
-                </div>
-              )
-            })}
+            {arrivals.map((a) => (
+              <div className="arrival-row" key={a.no}>
+                <NoBadge no={a.no} />
+                <span className="arrival-time">
+                  {fmtAbsMin(a.dep)}
+                  <i>{stName(a.from)}</i>
+                </span>
+                <span className="arrival-arrow">→</span>
+                <span className="arrival-time">
+                  {fmtAbsMin(a.arr)}
+                  <i>{stName(a.to)}</i>
+                </span>
+                <span className="arrival-dur">{durationText(a.durationMin)}</span>
+                <DelayBadge delay={a.delay} known={a.delayKnown} />
+              </div>
+            ))}
           </div>
+        )}
+
+        {transfers.length > 0 && (
+          <>
+            <div className="county-label transfer-heading">
+              中转建议 · {transfers.length} 条
+              <span className="county-origin-note">同站换乘 ≥10 分钟 · 等待 ≤3 小时</span>
+            </div>
+            <div className="transfer-list">
+              {transfers.map((r) => (
+                <div className="transfer" key={`${r.leg1}-${r.transfer}-${r.leg2}`}>
+                  <div className="transfer-line">
+                    <NoBadge no={r.leg1} />
+                    <span className="arrival-time">
+                      {fmtAbsMin(r.dep1)}
+                      <i>{stName(r.from)}</i>
+                    </span>
+                    <span className="arrival-arrow">→</span>
+                    <span className="arrival-time">
+                      {fmtAbsMin(r.arr1)}
+                      <i>{stName(r.transfer)}</i>
+                    </span>
+                    <span className="transfer-wait">换乘 {r.waitMin}m</span>
+                  </div>
+                  <div className="transfer-line">
+                    <NoBadge no={r.leg2} />
+                    <span className="arrival-time">
+                      {fmtAbsMin(r.dep2)}
+                      <i>{stName(r.transfer)}</i>
+                    </span>
+                    <span className="arrival-arrow">→</span>
+                    <span className="arrival-time">
+                      {fmtAbsMin(r.arr2)}
+                      <i>{stName(r.to)}</i>
+                    </span>
+                    <span className="arrival-dur">{durationText(r.totalMin)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
 
       <div className="county-section county-muted">
         本地热门与景点（M6b）尚未接入整理数据；当前只展示时刻表可推导的信息。
         <br />
-        直达结果由本地时刻表推算，与 12306 售票/开行可能有差异，仅供参考。
+        直达/中转结果由本地时刻表推算，与 12306 售票/开行可能有差异，仅供参考。
       </div>
     </div>
   )
