@@ -18,5 +18,8 @@ build/
 # 日志
 *.log
 
+# 运行时抓取进度（由全量抓取生成，不随仓库发布）
+public/live/fetch-status.json
+
 # 逆向分析工作区（scope/findings，内部管理产物）
 work/

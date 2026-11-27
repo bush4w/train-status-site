@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { waysToSegments, chainSegments } from './osm-lines.mjs'
+import { waysToSegments, chainSegments, splitAtReversals } from './osm-lines.mjs'
 
 // Overpass out geom 格式 fixture：3 段首尾相接 A-B-C-D + 1 段孤立 E-F
 const ELEMENTS = [
@@ -74,5 +74,58 @@ describe('chainSegments', () => {
       [0.02, 0.02],
     ]
     expect(chainSegments([a, b])).toHaveLength(2)
+  })
+
+  it('不把上下行接成 U 形折返（端点相接但方向相反）', () => {
+    const up = [
+      [0, 0],
+      [0, 0.5],
+      [0, 1],
+    ]
+    const down = [
+      [0.0003, 1],
+      [0.0003, 0.5],
+      [0.0003, 0],
+    ]
+    const lines = chainSegments([up, down])
+    expect(lines).toHaveLength(2)
+    expect(lines.every((l) => l.length === 3)).toBe(true)
+  })
+})
+
+describe('splitAtReversals', () => {
+  it('原地掉头的折返线拆成两条', () => {
+    const line = [
+      [0, 0],
+      [0, 0.5],
+      [0, 1],
+      [0.0003, 1],
+      [0.0003, 0.5],
+      [0.0003, 0],
+    ]
+    const parts = splitAtReversals(line)
+    expect(parts.length).toBe(2)
+    expect(parts[0][0]).toEqual([0, 0])
+    expect(parts[1][parts[1].length - 1]).toEqual([0.0003, 0])
+  })
+
+  it('直线不拆', () => {
+    const line = [
+      [0, 0],
+      [0, 1],
+      [0, 2],
+      [0, 3],
+    ]
+    expect(splitAtReversals(line)).toHaveLength(1)
+  })
+
+  it('很短的折返（小于 minSpurKm）不拆，避免锯齿', () => {
+    const line = [
+      [0, 0],
+      [0, 0.2],
+      [0, 0.2],
+      [0, 0.1],
+    ]
+    expect(splitAtReversals(line, { minSpurKm: 50 })).toHaveLength(1)
   })
 })

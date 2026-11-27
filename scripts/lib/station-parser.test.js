@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseStationNameJs, indexByName, indexByCode } from './station-parser.mjs'
+import { parseStationNameJs, indexByName, indexByCode, normalizeStationName } from './station-parser.mjs'
 
 // fixture 复刻 2026-11-25 实测的 station_name.js 格式（含特殊电报码）
 const FIXTURE =
@@ -34,5 +34,14 @@ describe('parseStationNameJs', () => {
     const stations = parseStationNameJs(FIXTURE)
     expect(indexByName(stations)['北京南'].code).toBe('VNP')
     expect(indexByCode(stations)['ZEH'].name).toBe('镇江南')
+  })
+
+  it('规范化站名：去空白与尾缀「站」，索引键可直接匹配', () => {
+    expect(normalizeStationName('惠州  北')).toBe('惠州北')
+    expect(normalizeStationName(' 北京南站 ')).toBe('北京南')
+    const stations = parseStationNameJs(FIXTURE)
+    const idx = indexByName(stations)
+    expect(idx[normalizeStationName('北京 南')].code).toBe('VNP')
+    expect(idx[normalizeStationName('镇江南站')].code).toBe('ZEH')
   })
 })

@@ -438,10 +438,19 @@ button {
   box-shadow: 0 0 0 1px rgba(230, 126, 34, 0.35);
 }
 
+/* 未抽样实测：中性灰描边，不暗示正点 */
+.ring-demo.unknown {
+  border: 2px dashed #9aa0a6;
+  box-shadow: none;
+  background: transparent;
+}
+
 /* ---------- 车次详情面板（右上，F3） ---------- */
 .detail {
   top: 12px;
   right: 12px;
+  /* 高于图例（同层时后渲染的图例会盖住时刻表） */
+  z-index: 1100;
   width: 280px;
   max-height: calc(100% - 120px);
   overflow-y: auto;
@@ -517,6 +526,12 @@ button {
 
 .delay-text {
   color: var(--delay);
+  font-size: var(--font-sm);
+  font-weight: 600;
+}
+
+.unknown-text {
+  color: #9aa0a6;
   font-size: var(--font-sm);
   font-weight: 600;
 }
@@ -612,6 +627,20 @@ button {
   color: #aaa;
   font-variant-numeric: tabular-nums;
   padding: 0 2px;
+}
+
+.timeline-ticks .next-day {
+  color: #c9a227;
+}
+
+.timeline-day {
+  margin-right: 4px;
+  padding: 0 4px;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  color: #c9a227;
+  background: rgba(201, 162, 39, 0.12);
+  border-radius: 4px;
 }
 
 /* ---------- 列车标记（车型 SVG 剪影 + 状态光环） ---------- */
@@ -846,4 +875,48 @@ button {
 .leaflet-tooltip {
   font-size: var(--font-sm);
   line-height: 1.5;
+}
+
+/* ---------- 全量抓取进度 / 跨日标记 ---------- */
+.fetch-banner {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(74, 111, 165, 0.94);
+  color: #fff;
+  font-size: var(--font-sm);
+  box-shadow: var(--panel-shadow);
+}
+
+.fetch-banner.done {
+  background: rgba(39, 174, 96, 0.95);
+}
+
+.fetch-banner button {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  color: #2c3e50;
+  font-size: var(--font-xs);
+  cursor: pointer;
+}
+
+.detail-type.next-day {
+  margin-left: 6px;
+  color: var(--delay);
+  font-weight: 600;
+}
+
+.next-day {
+  margin-left: 2px;
+  font-size: 10px;
+  color: var(--delay);
 }

@@ -33,8 +33,9 @@ const MAX_MARKERS = 800 // 同屏上限，防止低缩放爆量
 // ---------- 车型 SVG 剪影 ----------
 function trainIcon(t, selected, showLabel) {
   const info = trainTypeInfo(t.no)
-  const delayed = t.delay > 0
-  const stroke = delayed ? '#e67e22' : '#ffffff'
+  const known = t.delayKnown !== false
+  const delayed = known && t.delay > 0
+  const stroke = !known ? '#9aa0a6' : delayed ? '#e67e22' : '#ffffff'
   const shape =
     info.shape === 'emu'
       ? `<svg class="veh" width="26" height="13" viewBox="0 0 26 13"><path d="M1.5 6.5 C1.5 2.5 4 1.5 7 1.5 H18.5 C23.5 2 25 4.5 25 6.5 C25 8.5 23.5 11 18.5 11.5 H7 C4 11.5 1.5 10.5 1.5 6.5 Z" fill="${info.color}" stroke="${stroke}" stroke-width="1.4"/></svg>`
@@ -42,7 +43,7 @@ function trainIcon(t, selected, showLabel) {
   const label = showLabel
     ? `<span class="veh-label">${t.no}${delayed ? ` +${t.delay}` : ''}</span>`
     : ''
-  const cls = `veh-wrap${selected ? ' sel' : ''}${delayed ? ' delayed' : ''}`
+  const cls = `veh-wrap${selected ? ' sel' : ''}${delayed ? ' delayed' : ''}${known ? '' : ' unknown'}`
   return L.divIcon({
     className: cls,
     html: `<div class="veh-box">${shape}${label}</div>`,
@@ -51,30 +52,35 @@ function trainIcon(t, selected, showLabel) {
   })
 }
 
-function tooltipHtml(t, simMinutes, stationsMap) {
-  const st = computeTrainStatus(t, stationsMap, simMinutes)
+function tooltipHtml(t, minutes, stationsMap) {
+  const st = computeTrainStatus(t, stationsMap, minutes)
   const type = trainTypeInfo(t.no)
+  const known = t.delayKnown !== false
+  const delayText = !known
+    ? '<span style="color:#9aa0a6">（未实测）</span>'
+    : st.delay
+      ? `<span style="color:#e67e22">（晚点 ${st.delay} 分）</span>`
+      : '<span style="color:#27ae60">（正点）</span>'
   return (
     `<b>${t.no}</b> <span style="color:${type.color}">${type.label}</span>` +
-    (st.delay
-      ? `<span style="color:#e67e22">（晚点 ${st.delay} 分）</span>`
-      : '<span style="color:#27ae60">（正点）</span>') +
+    delayText +
     `<br/>${st.label}` +
     (st.nextStation ? `<br/>预计 ${st.arrTime} 到 ${st.nextStation}` : '') +
     `<br/><span style="color:#999">点击查看详情</span>`
   )
 }
 
-export default function TrainMap({ stations, stationsMap, trains, simMinutes, selectedNo, onSelect, flyTarget, selectedCorridor, onPickCorridor, lineFilter = 'all' }) {
+export default function TrainMap({ stations, stationsMap, trains, simMinutes, nowAbs, selectedNo, onSelect, flyTarget, selectedCorridor, onPickCorridor, lineFilter = 'all' }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef(new Map())
   const corridorLinesRef = useRef({})
   const indexRef = useRef(null)
   const pathsRef = useRef(new Map())
+  const selRouteRef = useRef(null)
   const stationsByNameRef = useRef(null)
-  const simRef = useRef(simMinutes)
-  simRef.current = simMinutes
+  const simRef = useRef(nowAbs ?? simMinutes)
+  simRef.current = nowAbs ?? simMinutes
   const onSelectRef = useRef(onSelect)
   onSelectRef.current = onSelect
   const trainsRef = useRef(trains)
@@ -121,6 +127,42 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
     return [s.lat, s.lng]
   }
 
+  // ---------- 选中车次的运行路径（沿线位，degraded 段虚线） ----------
+  function syncSelectedRoute() {
+    const map = mapRef.current
+    if (!map) return
+    if (selRouteRef.current) {
+      map.removeLayer(selRouteRef.current)
+      selRouteRef.current = null
+    }
+    const no = selectedNoRef.current
+    if (!no) return
+    const path = pathsRef.current.get(no)
+    if (!path || path.pts.length < 2) return
+    const toLL = ([lat, lng]) => {
+      const p = gcj(lat, lng)
+      return [p.lat, p.lng]
+    }
+    const info = trainTypeInfo(no)
+    const bad = new Set(path.degraded ?? [])
+    const group = L.layerGroup()
+    const segCount = (path.stopPt?.length ?? 0) - 1
+    for (let i = 0; i < segCount; i++) {
+      const from = path.stopPt[i]
+      const to = path.stopPt[i + 1]
+      if (to - from < 1) continue
+      const pts = path.pts.slice(from, to + 1).map(toLL)
+      if (bad.has(i)) {
+        // 该区间没有线位几何，退化成站点直线：画成灰色虚线，别当成真实走向
+        L.polyline(pts, { color: '#9aa0a6', weight: 2.2, opacity: 0.95, dashArray: '6 6', interactive: false }).addTo(group)
+      } else {
+        L.polyline(pts, { color: info.color, weight: 3, opacity: 0.85, interactive: false }).addTo(group)
+      }
+    }
+    group.addTo(map)
+    selRouteRef.current = group
+  }
+
   // ---------- 底图线路样式（图层过滤 + 选中走廊时淡化） ----------
   function applyLineStyles() {
     const dim = Boolean(selectedCorridorRef.current)
@@ -139,8 +181,10 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
     if (!map) return
     const zoom = map.getZoom()
     const pool = layerTrainsRef.current
-    // 本层车次本就不多时跳过 LOD 降级，否则低缩放下整层列车（如普速）一辆都看不到
-    const cap = pool.length <= MAX_MARKERS ? 5 : zoomLevelCap(zoom)
+    // 本层车次本就不多时跳过 LOD 降级，否则低缩放下整层列车（如普速）一辆都看不到；
+    // 用户显式切到 高铁/普速 图层时同样不做等级裁剪，只保留同屏上限
+    const cap =
+      lineFilterRef.current !== 'all' || pool.length <= MAX_MARKERS ? 5 : zoomLevelCap(zoom)
     const bounds = map.getBounds().pad(0.08)
     const showLabel = zoom >= 7
     const sm = stationsMapRef.current
@@ -159,7 +203,7 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
       seen.add(t.no)
 
       let m = markersRef.current.get(t.no)
-      const sig = `${t.delay}|${showLabel}|${selected}`
+      const sig = `${t.delay}|${t.delayKnown}|${showLabel}|${selected}`
       if (!m) {
         m = L.marker([g.lat, g.lng], { icon: trainIcon(t, selected, showLabel), zIndexOffset: selected ? 1000 : 100 }).addTo(map)
         m.bindTooltip(() => {
@@ -262,6 +306,7 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
       corridorLinesRef.current = {}
       pathsRef.current.clear()
       indexRef.current = null
+      selRouteRef.current = null
       stationLayersRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -309,19 +354,46 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
         const sm = stationsMapRef.current
         // 站对缓存跨车次复用
         const pairCache = new Map()
-        const trains = trainsRef.current
-        let i = 0
-        const chunk = () => {
+        // 吸附路径构建：时间片推进（每片 ≤8ms，空闲时继续），避免一次算几秒卡住拖动/缩放。
+        // 优先级：选中车次 → 当前视野内（按等级）→ 其余（按等级）。
+        const all = trainsRef.current
+        const bounds = map.getBounds().pad(0.15)
+        const order = []
+        const seen = new Set()
+        const pushTrain = (t) => {
+          if (!t || seen.has(t.no)) return
+          seen.add(t.no)
+          order.push(t)
+        }
+        const visible = []
+        for (const t of all) {
+          const s = sm[t.stops[0].code]
+          if (s && bounds.contains([s.lat, s.lng])) visible.push(t)
+        }
+        visible.sort((a, b) => trainLevel(a.no) - trainLevel(b.no))
+        pushTrain(all.find((t) => t.no === selectedNoRef.current))
+        visible.forEach(pushTrain)
+        all
+          .filter((t) => !seen.has(t.no))
+          .sort((a, b) => trainLevel(a.no) - trainLevel(b.no))
+          .forEach(pushTrain)
+
+        let idx = 0
+        const slice = () => {
           if (!alive) return
-          const end = Math.min(i + 120, trains.length)
-          for (; i < end; i++) {
-            const t = trains[i]
+          const deadline = performance.now() + 8
+          while (idx < order.length && performance.now() < deadline) {
+            const t = order[idx++]
             const p = buildTrainPath(t, sm, index, pairCache, router)
             if (p) pathsRef.current.set(t.no, p)
           }
-          if (i < trains.length) setTimeout(chunk, 0)
+          syncSelectedRoute()
+          if (idx < order.length) {
+            if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(slice, { timeout: 250 })
+            else setTimeout(slice, 16)
+          }
         }
-        chunk()
+        slice()
 
         // 走廊命中线：吸附到真实线位（失败回退弦线）
         const byName = stationsByNameRef.current
@@ -395,6 +467,7 @@ export default function TrainMap({ stations, stationsMap, trains, simMinutes, se
   // ---------- 选中车次/走廊变化 → 立即同步 ----------
   useEffect(() => {
     syncMarkers()
+    syncSelectedRoute()
     for (const [id, { halo, core }] of Object.entries(corridorLinesRef.current)) {
       const on = id === selectedCorridor
       halo.setStyle({ opacity: on ? 0.32 : 0 })

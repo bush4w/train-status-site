@@ -1,0 +1,36 @@
+{
+  "date": "2026-11-27",
+  "generatedAt": "2026-11-26T17:58:22.093Z",
+  "catalog": {
+    "trainNo": 12548,
+    "services": 16171,
+    "emuServices": 14003,
+    "convServices": 2168,
+    "byLetter": {
+      "C": 3349,
+      "D": 3478,
+      "G": 6159,
+      "N": 181,
+      "S": 1017,
+      "V": 1660,
+      "Y": 54,
+      "Z": 273
+    }
+  },
+  "capturedTrains": 12558,
+  "capturedServices": 16181,
+  "syntheticStations": 351,
+  "resolvedStations": 0,
+  "skip": {
+    "empty": 1,
+    "ungeocoded": 0,
+    "nonmonotonic": 1
+  },
+  "unknownStations": [],
+  "timetable": {
+    "exact": 0,
+    "reused": 11768,
+    "fetched": 791,
+    "failed": 1
+  }
+}

@@ -11,15 +11,15 @@ export function search(query, trains, stations, maxTrains = 6, maxStations = 4) 
   if (!q) return { trains: [], stations: [] }
   const qu = q.toUpperCase()
 
-  // 车次：精确 > 前缀 > 包含
+  // 车次：精确 > 前缀 > 包含（同时匹配 aliases：同一 train_no 的其他车次号）
   const exact = []
   const prefix = []
   const includes = []
   for (const t of trains) {
-    const no = String(t.no).toUpperCase()
-    if (no === qu) exact.push(t)
-    else if (no.startsWith(qu)) prefix.push(t)
-    else if (no.includes(qu)) includes.push(t)
+    const names = [t.no, ...(t.aliases ?? [])].map((n) => String(n).toUpperCase())
+    if (names.some((n) => n === qu)) exact.push(t)
+    else if (names.some((n) => n.startsWith(qu))) prefix.push(t)
+    else if (names.some((n) => n.includes(qu))) includes.push(t)
   }
   const matchedTrains = [...exact, ...prefix, ...includes].slice(0, maxTrains)
 

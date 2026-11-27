@@ -7,6 +7,8 @@ const KM_PER_DEG = 111.32
 const KEY = (lat, lng) => `${lat.toFixed(5)},${lng.toFixed(5)}`
 const CELL = 0.02 // 节点近端连接网格（°）
 const NEAR_DEG = 0.008 // 近端连接半径（≈800m），修复简化几何/OSM 线位在站场、桥隧处的断链
+const DENSIFY_KM = 2 // 长直边按 2km 插节点：简化后一条边可能横跨几十公里，
+// 不插点的话车站附近没有图节点，路由会整段找不到起终点
 
 function dkm(a, b) {
   const cosLat = Math.cos((((a.lat ?? a[0]) + (b.lat ?? b[0])) / 2) * Math.PI / 180)
@@ -77,16 +79,41 @@ export function buildRouteGraph(railLines, { nearDeg = NEAR_DEG } = {}) {
     return id
   }
   const addEdge = (a, b) => {
+    if (a === b) return
     const w = dkm(nodes[a], nodes[b])
     if (w <= 0) return
     nodes[a].adj.push([b, w])
     nodes[b].adj.push([a, w])
   }
+  // 长边按 DENSIFY_KM 插节点（插点在对角线上，不改变线位），
+  // 否则一条简化后的长直边附近没有节点，车站就吸附不上、路由整段失败
+  const addSeg = (a, b) => {
+    const km = dkm(nodes[a], nodes[b])
+    const parts = Math.min(400, Math.floor(km / DENSIFY_KM))
+    if (parts <= 0) {
+      addEdge(a, b)
+      return
+    }
+    let prev = a
+    const la = nodes[a].lat
+    const ga = nodes[a].lng
+    const db = nodes[b].lat - la
+    const dg = nodes[b].lng - ga
+    for (let i = 1; i < parts; i++) {
+      const t = i / parts
+      const id = nodeOf(la + db * t, ga + dg * t)
+      if (id !== prev) {
+        addEdge(prev, id)
+        prev = id
+      }
+    }
+    if (prev !== b) addEdge(prev, b)
+  }
   const addLine = (pts) => {
     let prev = -1
     for (const p of pts) {
       const id = nodeOf(p[0], p[1])
-      if (prev >= 0 && prev !== id) addEdge(prev, id)
+      if (prev >= 0 && prev !== id) addSeg(prev, id)
       prev = id
     }
   }
@@ -259,12 +286,18 @@ export function nearNodes(graph, lat, lng, maxKm = 8, k = 6) {
  * @param {number[]} b [lat,lng]
  */
 export function routePair(graph, a, b) {
+  // 先只用车站 4km 内的节点起步：起点太远会在路径开头拉出一条反向长直线；
+  // 找不到再放宽到 8km（站场偏离主线的情况）
+  return routePairOnce(graph, a, b, 4) ?? routePairOnce(graph, a, b, 8)
+}
+
+function routePairOnce(graph, a, b, startKm) {
   const { nodes } = graph
   const chordKm = dkm({ lat: a[0], lng: a[1] }, { lat: b[0], lng: b[1] })
-  const starts = nearNodes(graph, a[0], a[1])
-  const goals = nearNodes(graph, b[0], b[1])
+  const starts = nearNodes(graph, a[0], a[1], startKm)
+  const goals = nearNodes(graph, b[0], b[1], startKm)
   if (!starts.length || !goals.length) return null
-  const snapPenalty = 1.2 // 吸附距离按 1.2 折入代价，宁可在断开的碎片旁多走几百米
+  const snapPenalty = 1.8 // 吸附距离按 1.8 折入代价，优先离车站近的节点起步
   const limit = chordKm * 2.5 + Math.min(30, chordKm)
   const goalCost = new Map(goals.map(([id, d]) => [id, d * snapPenalty]))
   const dist = new Float64Array(nodes.length).fill(Infinity)

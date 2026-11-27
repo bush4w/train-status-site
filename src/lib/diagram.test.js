@@ -7,6 +7,7 @@ import {
   assignCorridorTrains,
   buildDiagram,
   corridorOfTrain,
+  buildTrainJourney,
   CORRIDORS,
 } from './diagram'
 
@@ -102,6 +103,55 @@ describe('matchCorridorTrain / buildDiagram', () => {
     const d = buildDiagram(corridor, assigned)
     const pts = d.trains[0].pts
     expect(pts[0].y).toBeGreaterThan(pts[pts.length - 1].y)
+  })
+})
+
+describe('buildTrainJourney（全程运行图）', () => {
+  const corridors = CORRIDORS.map((c) => resolveCorridor(c, byName)).filter((c) => c.stations.length >= 3)
+  const g1 = trains.find((t) => t.no === 'G1')
+  const j = buildTrainJourney(g1, stationsMap, corridors)
+
+  it('站序与累计里程单调递增，覆盖全部停站', () => {
+    expect(j.stations).toHaveLength(g1.stops.length)
+    for (let i = 1; i < j.stations.length; i++) {
+      expect(j.stations[i].km).toBeGreaterThan(j.stations[i - 1].km)
+    }
+    expect(j.maxKm).toBeCloseTo(j.stations[j.stations.length - 1].km, 1)
+  })
+
+  it('每个站间区段都有归属（识别到走廊或标记为其他线路）', () => {
+    expect(j.segments).toHaveLength(j.stations.length - 1)
+    expect(j.lineBands.length).toBeGreaterThanOrEqual(1)
+    for (const s of j.segments) expect(s).toHaveProperty('line')
+  })
+
+  it('匹配到的色带按站序排列且不重叠', () => {
+    for (let i = 1; i < j.lineBands.length; i++) {
+      expect(j.lineBands[i].fromStop).toBeGreaterThanOrEqual(j.lineBands[i - 1].toStop)
+    }
+    for (const b of j.lineBands) expect(b.toStop).toBeGreaterThan(b.fromStop)
+  })
+
+  it('跨日车次时间窗自动超过 1440 分钟（不被 0–24h 截断）', () => {
+    const night = {
+      no: 'N1',
+      delay: 0,
+      stops: [
+        { code: byName['北京南'].code, arr: null, dep: '23:10' },
+        { code: byName['上海虹桥'].code, arr: '04:30', arrDay: 1, dep: null },
+      ],
+    }
+    const nj = buildTrainJourney(night, stationsMap, [])
+    expect(nj.timeStart).toBe(1380) // 23:10 → 23:00 取整
+    expect(nj.timeEnd).toBeGreaterThan(1440)
+    expect(nj.stations[1].arr).toBe(1440 + 270)
+    expect(nj.lineBands).toEqual([])
+  })
+
+  it('没有走廊数据时也能画出全程（segments 标记为 null）', () => {
+    const g = buildTrainJourney(g1, stationsMap, [])
+    expect(g.stations.length).toBe(g1.stops.length)
+    expect(g.segments.every((s) => s.line === null)).toBe(true)
   })
 })
 

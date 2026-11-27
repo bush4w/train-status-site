@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRailIndex, nearestOnIndex, snapChord, buildTrainPath, posAtKm, kmFromStatus, distKm } from './snap'
+import { buildRailIndex, nearestOnIndex, snapChord, buildTrainPath, posAtKm, kmFromStatus, distKm, removeLoops } from './snap'
 
 // L 形线位：(0,0) → (0,0.02) → (0.01,0.02)（[lat,lng]）
 const LINE = [[0, 0], [0, 0.02], [0.01, 0.02]]
@@ -126,5 +126,55 @@ describe('buildTrainPath / posAtKm / kmFromStatus', () => {
     expect(kmFromStatus(path, stopped)).toBeCloseTo(path.stopKm[1])
     const pending = { status: 'pending', k: 0, progress: 0 }
     expect(kmFromStatus(path, pending)).toBe(0)
+  })
+
+  it('首末点就是车站坐标（不再停在吸附投影点上）', () => {
+    expect(path.pts[0]).toEqual([0, 0])
+    expect(path.pts[path.pts.length - 1]).toEqual([0.01, 0.02])
+    expect(path.stopPt).toHaveLength(2)
+    expect(path.stopPt[1]).toBe(path.pts.length - 1)
+  })
+
+  it('没有退化区间', () => {
+    expect(path.degraded).toEqual([])
+  })
+})
+
+describe('removeLoops', () => {
+  it('去掉尽头线回访环，保留折返点', () => {
+    const pts = [
+      [0, 0],
+      [0, 0.01],
+      [0, 0.02],
+      [0, 0.01],
+      [0, 0.005],
+    ]
+    const out = removeLoops(pts)
+    // 走到 0.02 又原路返回 0.01：环被剪掉，路线继续向 0.005
+    expect(out).toEqual([
+      [0, 0],
+      [0, 0.01],
+      [0, 0.005],
+    ])
+  })
+
+  it('正常折线不受影响', () => {
+    const pts = [
+      [0, 0],
+      [0, 0.01],
+      [0.005, 0.02],
+      [0.01, 0.03],
+    ]
+    expect(removeLoops(pts)).toEqual(pts)
+  })
+
+  it('短小弯曲（小于 minKm）不剪', () => {
+    const pts = [
+      [0, 0],
+      [0, 0.001],
+      [0, 0.002],
+      [0, 0.001],
+    ]
+    expect(removeLoops(pts)).toHaveLength(4)
   })
 })

@@ -20,14 +20,16 @@ import { isLayerTile } from './lib/tile-files.mjs'
 import { geocodeStations } from './lib/geocode.mjs'
 import { JINGHU_STATIONS } from './data/jinghu-line.mjs'
 import { CORRIDORS } from './data/corridors.mjs'
-import { buildOsmStationIndex, matchStation } from './lib/station-match.mjs'
-import { waysToSegments, chainSegments } from './lib/osm-lines.mjs'
+import { buildOsmStationIndex, matchStation, approxKm } from './lib/station-match.mjs'
+import { normalizeStationName } from './lib/station-name.mjs'
+import { waysToSegments, chainSegments, splitAtReversals } from './lib/osm-lines.mjs'
 import { simplify, roundPts } from './lib/simplify.mjs'
 import { buildWayGraph, routeLeg } from './lib/corridor-route.mjs'
-import { buildRailIndex, snapChord } from '../src/lib/snap.js'
+import { buildRailIndex, snapChord, nearestOnIndex } from '../src/lib/snap.js'
 
 const OSM_DIR = '.cache/osm'
 const TILES_DIR = '.cache/osm/tiles'
+const PATCH_DIR = '.cache/osm/patch'
 const STATIONS_FILE = 'public/data/stations.json'
 const CORRIDOR_TOL = 0.004 // 走廊折线存储容差（~400m）
 const CORRIDOR_MARGIN = 1.5 // 走廊站点 bbox 外扩（度），覆盖长大绕行（如青藏线德令哈弯）
@@ -80,23 +82,81 @@ function collectElements(prefix, files = tileFiles(prefix), quiet = false) {
   return elements
 }
 
-function buildLines(prefix, tol, label) {
-  if (!tileFiles(prefix).length) {
+/** 同一 way/node 会同时命中相邻瓦片（跨 6° 边界），按 type:id 去重 */
+function dedupeElements(elements) {
+  const seen = new Set()
+  const out = []
+  for (const el of elements) {
+    if ((el.type === 'way' || el.type === 'node') && el.id != null) {
+      const k = `${el.type}:${el.id}`
+      if (seen.has(k)) continue
+      seen.add(k)
+    }
+    out.push(el)
+  }
+  return out
+}
+
+// 缺口补片（fetch-osm-gaps.mjs 产物）按需加载一次，供两层线路与走廊共用
+let patchCache = null
+function loadPatchElements() {
+  if (patchCache) return patchCache
+  const out = []
+  if (existsSync(PATCH_DIR)) {
+    for (const f of readdirSync(PATCH_DIR).filter((x) => x.startsWith('patch_') && x.endsWith('.json'))) {
+      try {
+        const j = loadJson(`${PATCH_DIR}/${f}`)
+        for (const el of j.elements ?? []) {
+          if (el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length >= 2) out.push(el)
+        }
+      } catch {
+        console.warn(`  ⚠ 跳过损坏补片: ${f}`)
+      }
+    }
+  }
+  patchCache = dedupeElements(out)
+  if (patchCache.length) console.log(`→ 缺口补片：${patchCache.length} 个 way`)
+  return patchCache
+}
+
+function buildLines(prefix, tol, label, skipIds = new Set(), extras = []) {
+  if (!tileFiles(prefix).length && !extras.length) {
     console.warn(`⚠ 无 ${prefix}_s*.json 瓦片，跳过 ${label}`)
-    return []
+    return { lines: [], wayIds: new Set(), deduped: 0, split: 0, patched: 0 }
   }
   console.log(`→ ${label}：`)
-  const elements = collectElements(prefix)
-  const segments = waysToSegments(elements)
-  console.log(`  way 段数: ${segments.length}`)
+  const elements = dedupeElements([...collectElements(prefix), ...extras])
+  // 高铁 way 也带 usage=main，会同时命中两个层；hsr 优先，conv 跳过去重
+  const wayIds = new Set()
+  const kept = []
+  let deduped = 0
+  let patched = 0
+  const extraIds = new Set(extras.map((el) => el.id))
+  for (const el of elements) {
+    if (el.type === 'way' && el.id != null) {
+      if (skipIds.has(el.id)) {
+        deduped++
+        continue
+      }
+      wayIds.add(el.id)
+      if (extraIds.has(el.id)) patched++
+    }
+    kept.push(el)
+  }
+  const segments = waysToSegments(kept)
+  console.log(
+    `  way 段数: ${segments.length}${deduped ? `（跨层去重 ${deduped}）` : ''}${patched ? `，其中补片 ${patched}` : ''}`,
+  )
   const chained = chainSegments(segments)
-  const ptsBefore = chained.reduce((s, l) => s + l.length, 0)
-  const simplified = chained.map((l) => roundPts(simplify(l, tol))).filter((l) => l.length >= 2)
+  // 串联可能在车站/尽头把上下行接成「去—回」折线：拆掉原地折返，前端才不会沿原路返回
+  const split = chained.flatMap((l) => splitAtReversals(l))
+  const ptsBefore = split.reduce((s, l) => s + l.length, 0)
+  const simplified = split.map((l) => roundPts(simplify(l, tol))).filter((l) => l.length >= 2)
   const ptsAfter = simplified.reduce((s, l) => s + l.length, 0)
   console.log(
-    `  串联: ${chained.length} 条线, ${ptsBefore} 点 → 简化(${tol}°): ${simplified.length} 条, ${ptsAfter} 点 (${((ptsAfter / ptsBefore) * 100).toFixed(1)}%)`,
+    `  串联: ${chained.length} 条 → 拆折返 ${split.length} 条，${ptsBefore} 点 → 简化(${tol}°): ${simplified.length} 条, ${ptsAfter} 点 (${((ptsAfter / ptsBefore) * 100).toFixed(1)}%)`,
   )
-  return simplified
+  return { lines: simplified, wayIds, deduped, split: split.length - chained.length, patched }
 }
 
 // ---------- 瓦片覆盖自检 ----------
@@ -124,32 +184,88 @@ function reportCoverage(name, cov) {
 }
 
 // ---------- 车站精确坐标 ----------
-function buildStationCoords() {
+const STATION_LINE_KM = 5 // 车站离铁路线位超过此距离，视为匹配到了同名村镇
+const STATION_NEAR_LINE_KM = 3 // 线位兜底时，候选点到铁路的最大距离
+const STATION_CITY_KM = 350 // 线位兜底时，候选点到城市参考坐标的上限（挡同名异地）
+
+function nearestRailKm(railIndex, lat, lng) {
+  const p = nearestOnIndex(railIndex, lat, lng, -1, STATION_LINE_KM * 2)
+  return p ? Math.sqrt(p.d2) * 111.32 : Infinity
+}
+
+/**
+ * 站名候选里挑贴着铁路线位的那个：
+ * 县级站/远郊站常被地理编码到上级市（兴山 → 宜昌市区 ~90km），
+ * 常规 80km 半径会拒掉正确坐标，这里改用「在线位旁」作为首要判据。
+ */
+function matchNearRail(name, refLat, refLng, osmIndex, railIndex) {
+  const cands = osmIndex.get(normalizeStationName(name))
+  if (!cands?.length) return null
+  const scored = []
+  for (const c of cands) {
+    const cityKm = approxKm(refLat, refLng, c.lat, c.lon)
+    if (cityKm > STATION_CITY_KM) continue
+    const lineKm = nearestRailKm(railIndex, c.lat, c.lon)
+    if (lineKm > STATION_NEAR_LINE_KM) continue
+    scored.push({ lat: c.lat, lon: c.lon, cityKm, lineKm })
+  }
+  if (!scored.length) return null
+  scored.sort((a, b) => a.cityKm - b.cityKm || a.lineKm - b.lineKm)
+  return scored[0]
+}
+
+/**
+ * 车站坐标匹配
+ * 1) 常规：OSM 站名 + 城市级参考坐标消歧
+ * 2) 兜底：候选站名里挑「贴着铁路线位」的
+ * @param {{hsr:number[][][], conv:number[][][]}} railLines 已建好的线位（用于就近判定）
+ */
+function buildStationCoords(railLines) {
   if (!tileFiles('stations').length) {
     console.warn('⚠ 无 stations 瓦片，跳过车站匹配')
     return
   }
   console.log('→ 车站坐标匹配：')
-  const osmElements = collectElements('stations')
+  const osmElements = dedupeElements(collectElements('stations'))
   const osmIndex = buildOsmStationIndex(osmElements)
   console.log(`  OSM 车站索引: ${osmIndex.size} 个规范化名（元素 ${osmElements.length}）`)
+  const railIndex = buildRailIndex(railLines ?? { hsr: [], conv: [] })
 
-  // 12306 车站表 + 城市级参考坐标
-  const all = parseStationNameJs(readFileSync('.cache/railway/station_name.js', 'utf8'))
-  const jinghuPrecise = Object.fromEntries(JINGHU_STATIONS.map((s) => [s.name, { lat: s.lat, lng: s.lng }]))
-  const { geocoded } = geocodeStations(all, jinghuPrecise)
+  // 站点表：优先用 public/data/stations.json（含 12306 车站表之外的补充站），
+  // 没有时退回 12306 station_name.js。直接按站名匹配 OSM：
+  // 城市级坐标只当参考，不因城市表缺项被跳过（geocodeStations 会丢站）
+  let all
+  if (existsSync(STATIONS_FILE)) {
+    all = loadJson(STATIONS_FILE).map((s) => ({ code: s.code, name: s.name, city: s.city, lat: s.lat, lng: s.lng }))
+  } else {
+    const jinghuPrecise = Object.fromEntries(JINGHU_STATIONS.map((s) => [s.name, { lat: s.lat, lng: s.lng }]))
+    all = geocodeStations(parseStationNameJs(readFileSync('.cache/railway/station_name.js', 'utf8')), jinghuPrecise).geocoded
+  }
 
   const coords = {}
-  let matched = 0
-  for (const s of geocoded) {
-    const m = matchStation(s.name, s.lat, s.lng, osmIndex)
-    if (m) {
-      coords[s.name] = { lat: +m.lat.toFixed(5), lng: +m.lon.toFixed(5) } // 5 位小数≈1m，省体积
-      matched++
-    }
+  let viaRail = 0
+  const put = (name, p) => {
+    coords[name] = { lat: +p.lat.toFixed(5), lng: +p.lon.toFixed(5) } // 5 位小数≈1m，省体积
   }
+  for (const s of all) {
+    const m = matchStation(s.name, s.lat, s.lng, osmIndex)
+    if (m && nearestRailKm(railIndex, m.lat, m.lon) <= STATION_LINE_KM) {
+      put(s.name, m)
+      continue
+    }
+    const alt = matchNearRail(s.name, s.lat, s.lng, osmIndex, railIndex)
+    if (alt) {
+      put(s.name, alt)
+      viaRail++
+      continue
+    }
+    if (m) put(s.name, m) // 线位数据缺失时保留常规匹配
+  }
+  const total = Object.keys(coords).length
   writeFileSync(`${OSM_DIR}/osm-station-coords.json`, JSON.stringify(coords))
-  console.log(`  12306 车站匹配 OSM 精确坐标: ${matched}/${geocoded.length} (${((matched / geocoded.length) * 100).toFixed(1)}%)`)
+  console.log(
+    `  车站匹配 OSM 精确坐标: ${total}/${all.length} (${((total / all.length) * 100).toFixed(1)}%)，其中按线位就近修正 ${viaRail}`,
+  )
 }
 
 // ---------- 走廊线位（构建期预计算） ----------
@@ -174,6 +290,13 @@ function readWaysInBBox(bbox) {
     })
     for (const el of collectElements(layer, files, true)) {
       if (el.type !== 'way' || !Array.isArray(el.geometry) || el.geometry.length < 2) continue
+      if (!ways.has(el.id)) ways.set(el.id, el)
+    }
+  }
+  // 缺口补片也参与走廊线位（否则补出来的线在走廊图里仍是直线）
+  for (const el of loadPatchElements()) {
+    if (!el.geometry) continue
+    if (el.geometry.some((p) => p.lat >= bbox.s && p.lat <= bbox.n && p.lon >= bbox.w && p.lon <= bbox.e)) {
       if (!ways.has(el.id)) ways.set(el.id, el)
     }
   }
@@ -248,14 +371,24 @@ function main() {
   reportCoverage('hsr', hsrCov)
   reportCoverage('conv', convCov)
 
-  buildStationCoords()
+  // 只更新车站坐标：用现有 lines.json 的线位做「就近铁路」判定，不重建线路
   if (args['stations-only']) {
+    const old = existsSync('public/data/lines.json') ? loadJson('public/data/lines.json') : { hsr: [], conv: [] }
+    buildStationCoords({ hsr: old.hsr ?? [], conv: old.conv ?? [] })
     console.log('✓ --stations-only：仅更新站点坐标，跳过线路构建')
     return
   }
 
-  const hsr = buildLines('hsr', HSR_TOL, '高铁线路')
-  const conv = buildLines('conv', CONV_TOL, '普速干线')
+  const patches = loadPatchElements()
+  const patchHsr = patches.filter((el) => el.tags?.highspeed === 'yes')
+  const patchConv = patches.filter((el) => el.tags?.highspeed !== 'yes')
+  if (patches.length) console.log(`→ 缺口补片：高铁 ${patchHsr.length} 个 way / 普速 ${patchConv.length} 个 way`)
+  const hsrRes = buildLines('hsr', HSR_TOL, '高铁线路', new Set(), patchHsr)
+  const convRes = buildLines('conv', CONV_TOL, '普速干线', hsrRes.wayIds, patchConv)
+  const hsr = hsrRes.lines
+  const conv = convRes.lines
+  // 车站坐标放在线路之后：只有拿到线位才能判断候选站名是否真的在铁路旁
+  buildStationCoords({ hsr, conv })
   const corridors = buildCorridors({ hsr, conv })
 
   const lines = {
@@ -263,6 +396,12 @@ function main() {
     generatedAt: new Date().toISOString().slice(0, 10),
     tolerances: { hsr: HSR_TOL, conv: CONV_TOL, corridor: CORRIDOR_TOL },
     counts: { hsr: hsr.length, conv: conv.length },
+    // 构建质量指标：跨层去重 way 数、拆掉的折返线数、补片 way 数（回归用）
+    stats: {
+      dedupedWays: convRes.deduped,
+      splitLines: hsrRes.split + convRes.split,
+      patchWays: hsrRes.patched + convRes.patched,
+    },
     tiles: {
       hsr: hsrCov,
       conv: convCov,
