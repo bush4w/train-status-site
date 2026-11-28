@@ -246,7 +246,7 @@ OSM Overpass ─▶ fetch-osm-geom.mjs ─▶ build-lines.mjs ─▶ public/data
 | `trains.json` | `no` 主车次号、`aliases` 同一内部编号的其他车次号、`route` 起讫、`train_no`、`delay`、`crossDay` 是否跨日、`durationMin`、`startOffset`、`stops[]` 各站 `code`/`arr`/`dep`/`arrDay`/`depDay` |
 | `status.json` | `dataDate` 数据日期、`generatedAt`、`complete`、`counts`（车站/车次/班次） |
 | `fetch-report.json` | 全量抓取报告：目录规模、入库车次/班次、跳过原因、未定位站名、缓存命中/在线抓取数 |
-| `lines.json` | `hsr` 与 `conv` 两组 `[[lat,lng],...]` 折线（已简化；高铁 way 不再重复进普速层，串联产生的折返线会被拆开），以及 20 条走廊的构建期预计算线位 `corridors`；含 OSM 署名、容差与 `stats`（跨层去重 / 拆折返条数） |
+| `lines.json` | `hsr` 与 `conv` 两组 `[[lat,lng],...]` 折线（已简化；高铁 way 不再重复进普速层，串联产生的折返线会被拆开，缺口补片按 way 合并），以及 20 条走廊的构建期预计算线位 `corridors`；含 OSM 署名、容差与 `stats`（跨层去重 / 拆折返 / 补片 way 数） |
 | `counties.json` | 地市 `cities[]` / 区县 `counties[]`：`code` 行政区划码、`name`、`city`/`province`、`center`、`polys`（外环点列，GCJ-02，已简化）与 `stations`（按点面归属的车站电报码）；`stationsAssigned/Total` 记录归属覆盖率 |
 | `delays.json` | `delayAsOf` 抽样时间、`sampled` 本轮实测车次列表、`delays` 实测车次 → 晚点分钟（不含未抽样车次） |
 | `fetch-status.json` | 全量抓取进度（`running`/`phase`/`done`/`total`），前端顶部进度条轮询 |
@@ -272,7 +272,7 @@ OSM Overpass ─▶ fetch-osm-geom.mjs ─▶ build-lines.mjs ─▶ public/data
 - **车次覆盖**：当前 12,639 趟 / 16,264 班次，目录并集 12,667 个 `train_no` / 16,301 班次；跳过空/失败 1 趟、时刻非单调 1 趟、站点未覆盖 0。极少数幽灵车/无法定位支线会在 `fetch-report.json` 中列出。
 - **目录快照不稳**：`getTrainName` 单次响应会缺条目（同日实测 10.6k–17.2k 条），全量模式用「3 次在线 + 磁盘同日缓存」并集缓解；极端情况下仍可能有少量当日新加/临时车次未入目录。
 - **跨零点车次**：已支持「当日出发、次日到达」的完整入库与位置推算（本次 1,125 趟）；前一日出发、当日仍在途的车次（需要多日实例键）暂不进入当日地图。
-- **坐标精度**：3,364 站为 OSM 实测站房坐标（含按线位就近修正，解决了县级站被地理编码到上级市的问题）；344 个时刻表经停小站用同车次前后已知站坐标插值（`synthetic:true`，误差取决于站间距）；59 站仍是城市级近似。另有约 50 个站所在支线尚未抓取线位，路径会以站点直线穿过。
+- **坐标精度**：3,710 站为 OSM 实测站房坐标（含按线位就近修正，解决了县级站被地理编码到上级市的问题）；344 个时刻表经停小站用同车次前后已知站坐标插值（`synthetic:true`，误差取决于站间距）；57 站仍是城市级近似。支线缺口用 `fetch-osm-gaps.mjs` 补片（144 个网格，含 22 个 OSM 确认无铁路的网格），直线兜底站对从 124 对降到 20 对；仍缺线位的区间会以站点直线穿过。
 - **晚点时效**：每轮只对约 24 趟在途车抽样实测，刷新间隔 15±8 分钟；未覆盖车次在前端标注「未实测」，不参与晚点榜单。正晚点接口配方可能随 12306 改版失效。
 - **时刻表日期**：快照对应抓取当日运行图；启动时若 `dataDate` 不是当天会自动后台重抓。
 - **全量耗时**：首次全量约 1.5–2.5 小时；次日复用缓存通常 20–40 分钟（本次 11-28：12,505 趟复用 / 134 趟精确命中 / 1 趟新抓）。抓取期间页面使用旧数据，完成后顶部提示刷新。
