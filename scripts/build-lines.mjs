@@ -20,8 +20,7 @@ import { isLayerTile } from './lib/tile-files.mjs'
 import { geocodeStations } from './lib/geocode.mjs'
 import { JINGHU_STATIONS } from './data/jinghu-line.mjs'
 import { CORRIDORS } from './data/corridors.mjs'
-import { buildOsmStationIndex, matchStation, approxKm } from './lib/station-match.mjs'
-import { normalizeStationName } from './lib/station-name.mjs'
+import { buildOsmStationIndex, matchStation, matchStationNearRail, approxKm } from './lib/station-match.mjs'
 import { waysToSegments, chainSegments, splitAtReversals } from './lib/osm-lines.mjs'
 import { simplify, roundPts } from './lib/simplify.mjs'
 import { buildWayGraph, routeLeg } from './lib/corridor-route.mjs'
@@ -97,17 +96,27 @@ function dedupeElements(elements) {
   return out
 }
 
-// 缺口补片（fetch-osm-gaps.mjs 产物）按需加载一次，供两层线路与走廊共用
+// 缺口补片（fetch-osm-gaps.mjs 产物）按需加载一次，供两层线路与走廊共用。
+// 补片是按 railway=rail 全量抓的，会带进站线/货场/专用线：只保留可能的正线，
+// 否则 lines.json 会膨胀、站场还会多出一堆支线噪声
+const PATCH_DROP_USAGE = new Set(['industrial', 'military', 'test'])
 let patchCache = null
 function loadPatchElements() {
   if (patchCache) return patchCache
   const out = []
+  let skipped = 0
   if (existsSync(PATCH_DIR)) {
     for (const f of readdirSync(PATCH_DIR).filter((x) => x.startsWith('patch_') && x.endsWith('.json'))) {
       try {
         const j = loadJson(`${PATCH_DIR}/${f}`)
         for (const el of j.elements ?? []) {
-          if (el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length >= 2) out.push(el)
+          if (el.type !== 'way' || !Array.isArray(el.geometry) || el.geometry.length < 2) continue
+          const tags = el.tags ?? {}
+          if (tags.service || PATCH_DROP_USAGE.has(tags.usage)) {
+            skipped++
+            continue
+          }
+          out.push(el)
         }
       } catch {
         console.warn(`  ⚠ 跳过损坏补片: ${f}`)
@@ -115,7 +124,7 @@ function loadPatchElements() {
     }
   }
   patchCache = dedupeElements(out)
-  if (patchCache.length) console.log(`→ 缺口补片：${patchCache.length} 个 way`)
+  if (patchCache.length) console.log(`→ 缺口补片：${patchCache.length} 个 way${skipped ? `（过滤站线/专用线 ${skipped}）` : ''}`)
   return patchCache
 }
 
@@ -194,27 +203,6 @@ function nearestRailKm(railIndex, lat, lng) {
 }
 
 /**
- * 站名候选里挑贴着铁路线位的那个：
- * 县级站/远郊站常被地理编码到上级市（兴山 → 宜昌市区 ~90km），
- * 常规 80km 半径会拒掉正确坐标，这里改用「在线位旁」作为首要判据。
- */
-function matchNearRail(name, refLat, refLng, osmIndex, railIndex) {
-  const cands = osmIndex.get(normalizeStationName(name))
-  if (!cands?.length) return null
-  const scored = []
-  for (const c of cands) {
-    const cityKm = approxKm(refLat, refLng, c.lat, c.lon)
-    if (cityKm > STATION_CITY_KM) continue
-    const lineKm = nearestRailKm(railIndex, c.lat, c.lon)
-    if (lineKm > STATION_NEAR_LINE_KM) continue
-    scored.push({ lat: c.lat, lon: c.lon, cityKm, lineKm })
-  }
-  if (!scored.length) return null
-  scored.sort((a, b) => a.cityKm - b.cityKm || a.lineKm - b.lineKm)
-  return scored[0]
-}
-
-/**
  * 车站坐标匹配
  * 1) 常规：OSM 站名 + 城市级参考坐标消歧
  * 2) 兜底：候选站名里挑「贴着铁路线位」的
@@ -253,7 +241,10 @@ function buildStationCoords(railLines) {
       put(s.name, m)
       continue
     }
-    const alt = matchNearRail(s.name, s.lat, s.lng, osmIndex, railIndex)
+    const alt = matchStationNearRail(s.name, s.lat, s.lng, osmIndex, (lat, lng) => nearestRailKm(railIndex, lat, lng), {
+      maxCityKm: STATION_CITY_KM,
+      maxLineKm: STATION_NEAR_LINE_KM,
+    })
     if (alt) {
       put(s.name, alt)
       viaRail++

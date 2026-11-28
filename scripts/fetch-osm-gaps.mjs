@@ -32,10 +32,11 @@ const MIN_KM = Number(args['min-km'] ?? 3) // 短于此的站对不补（视觉�
 const MAX_WAIT_MIN = Number(args['max-wait-min'] ?? 60)
 const PROXY = args.proxy ?? null
 const UA = 'train-status-site/1.0 (personal learning project; low-frequency gap patching)'
+// 2026-11-28 实测：overpass-api.de 长时间 502 限容；openstreetmap.fr 可用且数据完整；
+// kumi.systems / private.coffee / osm.jp 不可达；osm.ch 对中国区返回空（不可用）
 const MIRRORS = [
+  'https://overpass.openstreetmap.fr/api/interpreter',
   'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
 ]
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -145,15 +146,20 @@ async function tryCellOnce({ lat, lon }) {
       status = 0
     }
     if (status === 200 && validJsonFile(outFile)) {
-      // osm.ch 之类镜像对中国区返回空结果，别把空壳当成功
       const j = JSON.parse(readFileSync(outFile, 'utf8'))
-      if (!Array.isArray(j.elements) || j.elements.length === 0) {
-        console.warn(`· patch (${lat},${lon}) 空结果 @${host}，换镜像`)
+      const n = Array.isArray(j.elements) ? j.elements.length : 0
+      // 空结果：主站返回空说明该网格确实没有铁路（可信），落盘避免反复重试；
+      // 其他镜像（如 osm.ch 只服务本国）返回空不可信，继续换镜像
+      if (n === 0) {
+        if (host === 'overpass-api.de') {
+          console.log(`∅ ${patchName(lat.toFixed(2), lon.toFixed(2))} 该网格无铁路`)
+          return 'empty'
+        }
         try { unlinkSync(outFile) } catch { /* 忽略 */ }
         continue
       }
       const kb = Math.round(statSync(outFile).size / 1024)
-      console.log(`✓ ${patchName(lat.toFixed(2), lon.toFixed(2))} ${kb}KB @${host}`)
+      console.log(`✓ ${patchName(lat.toFixed(2), lon.toFixed(2))} ${kb}KB ${n} 个 way @${host}`)
       return 'ok'
     }
     try {
@@ -196,6 +202,7 @@ async function main() {
   let pending = cells.filter((c) => !validJsonFile(`${PATCH_DIR}/${patchName(c.lat.toFixed(2), c.lon.toFixed(2))}`))
   const cached = cells.length - pending.length
   let ok = 0
+  let empty = 0
   let pass = 0
   while (pending.length && Date.now() < deadline) {
     const wait = waits[Math.min(pass, waits.length - 1)]
@@ -211,6 +218,7 @@ async function main() {
       }
       const r = await tryCellOnce(c)
       if (r === 'ok') ok++
+      else if (r === 'empty') empty++
       else if (r === 'failed') next.push(c)
       await politeWait()
     }
@@ -219,12 +227,12 @@ async function main() {
   }
   const failed = pending.length
 
-  console.log(`\n=== 补片完成：新增 ${ok}，已存在 ${cached}，未拿到 ${failed}，共 ${cells.length} 个网格 ===`)
+  console.log(`\n=== 补片完成：新增 ${ok}，无铁路网格 ${empty}，已存在 ${cached}，未拿到 ${failed}，共 ${cells.length} 个网格 ===`)
   console.log('下一步：node scripts/build-lines.mjs（会把 patch 合并进 lines.json）')
   writeFileSync(
     `${PATCH_DIR}/gap-report.json`,
     JSON.stringify(
-      { generatedAt: new Date().toISOString(), degradedPairs: degraded.length, cells: cells.length, ok, cached, failed },
+      { generatedAt: new Date().toISOString(), degradedPairs: degraded.length, cells: cells.length, ok, empty, cached, failed },
       null,
       2,
     ),

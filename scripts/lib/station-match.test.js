@@ -4,6 +4,7 @@ import {
   isLatinName,
   buildOsmStationIndex,
   matchStation,
+  matchStationNearRail,
 } from './station-match.mjs'
 
 const ELEMENTS = [
@@ -73,5 +74,41 @@ describe('buildOsmStationIndex / matchStation', () => {
 
   it('未收录站名返回 null', () => {
     expect(matchStation('不存在的站', 30, 110, idx)).toBeNull()
+  })
+})
+
+describe('matchStationNearRail（按铁路线位就近匹配）', () => {
+  const idx = buildOsmStationIndex([
+    // 兴山：真实站址离宜昌市区约 90km，但紧贴郑渝高铁
+    { type: 'node', id: 11, lat: 31.3277, lon: 110.7455, tags: { name: '兴山站' } },
+    // 同名村镇：离宜昌市区很近，但离所有铁路 20km+
+    { type: 'node', id: 12, lat: 30.70, lon: 111.28, tags: { name: '兴山站' } },
+    // 同名异地（>350km）
+    { type: 'node', id: 13, lat: 40.0, lon: 116.0, tags: { name: '兴山站' } },
+  ])
+  // 假线位：只有一条经过 31.3,110.7 的线
+  const railKmAt = (lat, lng) => (Math.abs(lat - 31.33) < 0.05 && Math.abs(lng - 110.75) < 0.05 ? 0.3 : 20)
+
+  it('常规匹配会撞上同名村镇，线位兜底能选回真实站址', () => {
+    const plain = matchStation('兴山', 30.6869, 111.2494, idx)
+    // 常规匹配只按城市参考就近：选到了 2km 外的同名村镇（离铁路 20km）
+    expect(plain.lat).toBeCloseTo(30.70)
+    const r = matchStationNearRail('兴山', 30.6869, 111.2494, idx, railKmAt)
+    expect(r).not.toBeNull()
+    expect(r.lat).toBeCloseTo(31.3277)
+    expect(r.lineKm).toBeLessThan(1)
+  })
+
+  it('同名异地超过 350km 的直接排除', () => {
+    const r = matchStationNearRail('兴山', 30.6869, 111.2494, idx, () => 0)
+    expect(r.lat).not.toBeCloseTo(40.0)
+  })
+
+  it('所有候选都不在铁路旁时返回 null', () => {
+    expect(matchStationNearRail('兴山', 30.6869, 111.2494, idx, () => 50)).toBeNull()
+  })
+
+  it('未收录站名返回 null', () => {
+    expect(matchStationNearRail('不存在', 30, 110, idx, railKmAt)).toBeNull()
   })
 })

@@ -65,3 +65,30 @@ export function matchStation(name, refLat, refLng, osmIndex, maxKm = 80, maxKmUn
   const limit = unique ? maxKmUnique : maxKm
   return best && best.km <= limit ? best : null
 }
+
+/**
+ * 线位就近匹配：候选站名里挑「贴着铁路线位」的那个。
+ * 县级站/远郊站常被地理编码到上级市（兴山 → 宜昌市区约 90km），
+ * 常规 80km 半径会拒掉正确坐标；这里改用「在线位旁」作为首要判据。
+ * @param {string} name
+ * @param {number} refLat 参考纬度（城市级或现有坐标）
+ * @param {number} refLng
+ * @param {Map} osmIndex buildOsmStationIndex 产物
+ * @param {(lat:number,lng:number)=>number} railKmAt 点到最近铁路线位的距离（km）
+ * @returns {{lat:number, lon:number, cityKm:number, lineKm:number}|null}
+ */
+export function matchStationNearRail(name, refLat, refLng, osmIndex, railKmAt, { maxCityKm = 350, maxLineKm = 3 } = {}) {
+  const cands = osmIndex.get(normalizeStationName(name))
+  if (!cands?.length) return null
+  const scored = []
+  for (const c of cands) {
+    const cityKm = approxKm(refLat, refLng, c.lat, c.lon)
+    if (cityKm > maxCityKm) continue // 同名异地（如「白果」相距 650km）
+    const lineKm = railKmAt(c.lat, c.lon)
+    if (!(lineKm <= maxLineKm)) continue
+    scored.push({ lat: c.lat, lon: c.lon, cityKm, lineKm })
+  }
+  if (!scored.length) return null
+  scored.sort((a, b) => a.cityKm - b.cityKm || a.lineKm - b.lineKm)
+  return scored[0]
+}
